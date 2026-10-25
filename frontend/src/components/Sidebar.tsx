@@ -1,7 +1,7 @@
-import { Activity, BadgeIndianRupee, Boxes, Building2, FileCheck2, GitFork, HandCoins, LayoutDashboard, Leaf, LogIn, ScrollText, ShieldCheck } from "lucide-react";
+import { Activity, BadgeIndianRupee, Boxes, Building2, FileCheck2, GitFork, HandCoins, LayoutDashboard, Leaf, LogIn, ScrollText, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { AuthUser, Role } from "../types";
 
-export type PageKey = "Overview" | "Projects" | "Donations" | "Expenses" | "Receipt verification" | "Multi-hop flows" | "Audit log" | "NGO Directory";
+export type PageKey = "Overview" | "Projects" | "Donations" | "Expenses" | "Receipt verification" | "Multi-hop flows" | "Funding integrity" | "Audit log" | "NGO Directory";
 
 const navigation = [
   { label: "Overview", icon: LayoutDashboard },
@@ -11,6 +11,7 @@ const navigation = [
   { label: "Expenses", icon: BadgeIndianRupee },
   { label: "Receipt verification", icon: FileCheck2 },
   { label: "Multi-hop flows", icon: GitFork },
+  { label: "Funding integrity", icon: ShieldAlert },
   { label: "Audit log", icon: ScrollText },
 ] as const;
 

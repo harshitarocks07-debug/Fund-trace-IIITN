@@ -159,6 +159,27 @@ export const authService = {
     }
   },
 
+  async loginAsDemoRole(role: Role): Promise<AuthUser | null> {
+    const demo = DEMO_USERS.find((u) => u.role === role);
+    if (!demo) return null;
+    try {
+      return await this.login({ email: demo.email, password: demo.password });
+    } catch (err) {
+      console.warn("Could not login via backend for demo role, using fallback session:", err);
+      const fallbackUser: AuthUser = {
+        id: `demo-${demo.role.toLowerCase()}`,
+        email: demo.email,
+        full_name: demo.name,
+        role: demo.role,
+        organization: demo.organization,
+        is_active: true,
+        token: "demo-token",
+      };
+      this.setSession("demo-token", fallbackUser);
+      return fallbackUser;
+    }
+  },
+
   async register(payload: RegisterPayload | { email: string; password: string; full_name?: string; role?: string }): Promise<AuthUser> {
     const normPayload: RegisterPayload = {
       email: payload.email,

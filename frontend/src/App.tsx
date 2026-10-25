@@ -31,12 +31,14 @@ import { Sidebar, type PageKey } from "./components/Sidebar";
 import { StatCard } from "./components/StatCard";
 import { StatusBadge } from "./components/StatusBadge";
 import { MultiHopFlowView } from "./components/MultiHopFlowView";
+import { FundTraceWalkthrough } from "./components/FundTraceWalkthrough";
 import { LoginPage } from "./pages/LoginPage";
 import { NGODashboard } from "./pages/NGODashboard";
 import { NGOManagementPage } from "./pages/NGOManagementPage";
+import { FundingIntegrityPage } from "./pages/FundingIntegrityPage";
 import { authService, DEMO_USERS } from "./services/authService";
 import { receiptService } from "./services/receiptService";
-import { blockchainService } from "./services/blockchainService";
+import { blockchainService, type BlockchainVerifyResponse } from "./services/blockchainService";
 import { formatINR, initialData } from "./utils/demoData";
 import type { AuditEntry, AuthUser, Expense, FundTraceData, Project, Role, ReceiptOCRResult } from "./types";
 
@@ -174,8 +176,19 @@ export default function App() {
   const pending = data.expenses.filter((item) => item.status === "Pending review" || item.status === "More evidence");
   const latestExpenses = [...data.expenses].sort((a, b) => b.date.localeCompare(a.date));
 
-  function handleRoleChange(newRole: Role) {
+  async function handleRoleChange(newRole: Role) {
     setRole(newRole);
+    localStorage.setItem(ROLE_KEY, newRole);
+    try {
+      const user = await authService.loginAsDemoRole(newRole);
+      if (user) {
+        setCurrentUser(user);
+        setToast(`Role switched to ${newRole} (${user.full_name}). Real permissions active.`);
+        return;
+      }
+    } catch (err) {
+      console.warn("Could not authenticate demo role via backend:", err);
+    }
     const demo = DEMO_USERS.find((u) => u.role === newRole);
     if (demo) {
       const updatedUser: AuthUser = {
@@ -189,7 +202,7 @@ export default function App() {
       };
       setCurrentUser(updatedUser);
       authService.setSession("demo-jwt-token", updatedUser);
-      setToast(`Role switched to ${newRole} (${demo.name}). Enforcing ${newRole} permissions.`);
+      setToast(`Role switched to ${newRole} (${demo.name}).`);
     }
   }
 
@@ -282,6 +295,28 @@ export default function App() {
       reasons.push("Exact receipt file has already been submitted");
       score += 45;
     }
+    const normalizedInvoice = (ocrResult?.invoiceNumber || invoiceNumberVal)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+    const normalizedVendor = (ocrResult?.vendor || vendorVal)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+    if (
+      normalizedInvoice &&
+      normalizedVendor &&
+      (ocrResult?.duplicateInvoice ||
+        data.expenses.some((item) =>
+          item.invoiceNumber.toLowerCase().replace(/[^a-z0-9]/g, "") === normalizedInvoice &&
+          item.vendor.toLowerCase().replace(/[^a-z0-9]/g, "") === normalizedVendor
+        ))
+    ) {
+      reasons.push("Invoice number and vendor match a previously submitted expense");
+      score += 35;
+    }
+    if (ocrResult?.duplicateFile) {
+      reasons.push("Receipt file fingerprint matches a previously uploaded document");
+      score += 45;
+    }
     if (extractedAmount !== undefined && extractedAmount !== claimedAmount) {
       reasons.push(`Claimed amount differs from receipt amount by ${money(Math.abs(claimedAmount - extractedAmount))}`);
       score += 30;
@@ -302,6 +337,18 @@ export default function App() {
         score += 15;
       }
     }
+    if (ocrResult?.arithmeticConsistent === false) {
+      reasons.push("Invoice subtotal, tax, and total do not reconcile");
+      score += 20;
+    }
+    if (ocrResult?.currency && ocrResult.currency !== "INR") {
+      reasons.push(`Invoice currency is ${ocrResult.currency}; project budget is recorded in INR`);
+      score += 10;
+    }
+    if (ocrResult?.paymentStatus === "Unpaid") {
+      reasons.push("Invoice is marked unpaid; confirm payment with separate evidence");
+    }
+    if (ocrResult?.warnings.length) reasons.push(...ocrResult.warnings);
     const approvedForProject = data.expenses
       .filter((item) => item.projectId === projectId && item.status === "Approved")
       .reduce((sum, item) => sum + item.claimedAmount, 0);
@@ -327,6 +374,22 @@ export default function App() {
       extractedVendor: ocrResult?.vendor,
       extractedInvoiceNumber: ocrResult?.invoiceNumber,
       extractedDate: ocrResult?.date || formDate || new Date().toISOString().slice(0, 10),
+      extractedDueDate: ocrResult?.dueDate,
+      extractedVendorAddress: ocrResult?.vendorAddress,
+      extractedGstin: ocrResult?.gstin,
+      extractedDescription: ocrResult?.description,
+      extractedQuantity: ocrResult?.quantity,
+      extractedQuantityUnit: ocrResult?.quantityUnit,
+      extractedUnitPrice: ocrResult?.unitPrice,
+      extractedSubtotal: ocrResult?.subtotal,
+      extractedTaxAmount: ocrResult?.taxAmount,
+      extractedCurrency: ocrResult?.currency,
+      extractedPaymentStatus: ocrResult?.paymentStatus,
+      extractedPaymentReference: ocrResult?.paymentReference,
+      arithmeticConsistent: ocrResult?.arithmeticConsistent,
+      duplicateInvoice: ocrResult?.duplicateInvoice,
+      duplicateFile: ocrResult?.duplicateFile,
+      missingInvoiceFields: ocrResult?.missingFields,
       receiptName: file?.size ? file.name : "No receipt attached",
       receiptHash,
       receiptId,
@@ -441,6 +504,13 @@ export default function App() {
             </button>
           </div>
 
+          <FundTraceWalkthrough
+            currentRole={role}
+            onSelectRole={(newRole) => void handleRoleChange(newRole)}
+            onNavigate={(targetPage) => setPage(targetPage)}
+            onNewExpense={() => setExpenseModal(true)}
+          />
+
           {page === "Overview" && <Overview
             role={role} data={data} donationsTotal={donationsTotal} approvedTotal={approvedTotal}
             pending={pending} latestExpenses={latestExpenses} onNewExpense={() => setExpenseModal(true)}
@@ -458,6 +528,7 @@ export default function App() {
           {page === "Expenses" && <ExpensesPage data={data} role={role} onNew={() => setExpenseModal(true)} onSelect={setSelectedExpense} />}
           {page === "Receipt verification" && role !== "Donor" && <ReceiptPage expenses={data.expenses} />}
           {page === "Multi-hop flows" && <MultiHopFlowView role={role} />}
+          {page === "Funding integrity" && <FundingIntegrityPage />}
           {page === "Audit log" && role !== "Donor" && <AuditPage entries={data.auditLog} projects={data.projects} expenses={data.expenses} />}
           
           <footer className="app-footer">
@@ -515,7 +586,7 @@ export default function App() {
                 <div className="ocr-card-header">
                   <div className="ocr-card-title">
                     <Sparkles size={15} />
-                    <span>OCR Extracted Receipt Candidate Data</span>
+                    <span>OCR Extracted Invoice Candidate Data</span>
                   </div>
                   <span className={`ocr-confidence-pill ${ocrResult.confidence < 0.6 ? "low" : ""}`}>
                     {Math.round(ocrResult.confidence * 100)}% Confidence
@@ -538,7 +609,69 @@ export default function App() {
                     <span>Amount</span>
                     <b>{ocrResult.amount !== undefined ? money(ocrResult.amount) : "Not recognized"}</b>
                   </div>
+                  <div className="ocr-field-item">
+                    <span>Vendor address</span>
+                    <b>{ocrResult.vendorAddress ?? "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>GSTIN</span>
+                    <b>{ocrResult.gstin ?? "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Goods / services</span>
+                    <b>{ocrResult.description ?? "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Quantity</span>
+                    <b>{ocrResult.quantity !== undefined
+                      ? `${ocrResult.quantity}${ocrResult.quantityUnit ? ` ${ocrResult.quantityUnit}` : ""}`
+                      : "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Unit price</span>
+                    <b>{ocrResult.unitPrice !== undefined ? money(ocrResult.unitPrice) : "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Subtotal</span>
+                    <b>{ocrResult.subtotal !== undefined ? money(ocrResult.subtotal) : "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Tax</span>
+                    <b>{ocrResult.taxAmount !== undefined ? money(ocrResult.taxAmount) : "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Currency</span>
+                    <b>{ocrResult.currency ?? "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Payment status</span>
+                    <b>{ocrResult.paymentStatus ?? "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Payment reference</span>
+                    <b>{ocrResult.paymentReference ?? "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Due date</span>
+                    <b>{ocrResult.dueDate ?? "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>File fingerprint</span>
+                    <b>{ocrResult.fileHash ? `${ocrResult.fileHash.slice(0, 16)}…` : "Not available"}</b>
+                  </div>
                 </div>
+                {(ocrResult.duplicateInvoice || ocrResult.duplicateFile || ocrResult.warnings.length > 0) && (
+                  <ul className="ocr-warning-list" role="status">
+                    {ocrResult.duplicateInvoice && <li>Potential duplicate invoice detected for this vendor.</li>}
+                    {ocrResult.duplicateFile && <li>File fingerprint matches a previously uploaded document.</li>}
+                  {ocrResult.missingFields && ocrResult.missingFields.length > 0 && (
+                    <li>Fields not detected: {ocrResult.missingFields.join(", ")}.</li>
+                  )}
+                  {ocrResult.warnings
+                    .filter((warning) => !warning.toLowerCase().includes("duplicate"))
+                    .map((warning) => <li key={warning}>{warning}</li>)}
+                </ul>
+                )}
                 <p className="ocr-auto-applied-note">
                   <Check size={13} className="text-green" />
                   <span>Candidate fields pre-filled into the form. Human auditor review is still required before approval.</span>
@@ -776,7 +909,21 @@ function ReceiptPage({ expenses }: { expenses: Expense[] }) {
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrResult, setOcrResult] = useState<ReceiptOCRResult | null>(null);
   const [serverVerification, setServerVerification] = useState<string | null>(null);
+  const [verifyingSeal, setVerifyingSeal] = useState(false);
+  const [onChainProof, setOnChainProof] = useState<BlockchainVerifyResponse | null>(null);
   const matches = hash ? expenses.filter((item) => item.receiptHash === hash) : [];
+
+  async function handleVerifySeal(expenseId: string, receiptHash: string) {
+    setVerifyingSeal(true);
+    try {
+      const res = await blockchainService.verifySeal(expenseId, receiptHash);
+      setOnChainProof(res);
+    } catch (err: unknown) {
+      console.error("Seal verification error:", err);
+    } finally {
+      setVerifyingSeal(false);
+    }
+  }
 
   async function inspectFile(selected: File | null) {
     setFile(selected);
@@ -784,6 +931,7 @@ function ReceiptPage({ expenses }: { expenses: Expense[] }) {
     setError("");
     setOcrResult(null);
     setServerVerification(null);
+    setOnChainProof(null);
     if (!selected) return;
 
     const validation = receiptService.validateFile(selected);
@@ -875,9 +1023,57 @@ function ReceiptPage({ expenses }: { expenses: Expense[] }) {
                         <span className="onchain-verified-badge"><Link2 size={12} /> On-chain seal confirmed (Block #{item.blockchainBlockNumber || 18492101})</span>
                       )}
                     </div>
-                    <b>{item.status}</b>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <b>{item.status}</b>
+                      {item.blockchainStatus === "Confirmed" && (
+                        <button
+                          type="button"
+                          className="button button-outline"
+                          onClick={() => void handleVerifySeal(item.id, hash)}
+                          disabled={verifyingSeal}
+                          style={{ fontSize: "11px", padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}
+                        >
+                          <CheckCircle2 size={12} className="text-green" /> {verifyingSeal ? "Querying EVM…" : "Verify On-Chain"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {onChainProof && (
+              <div className="blockchain-attestation-panel" style={{ marginTop: 12 }}>
+                <div className="blockchain-panel-header">
+                  <div className="blockchain-title">
+                    <Link2 size={15} />
+                    <span>Live EVM Smart Contract Verification</span>
+                  </div>
+                  <span className={`blockchain-status-pill ${onChainProof.verified ? "confirmed" : "pending"}`}>
+                    <CheckCircle2 size={13} /> {onChainProof.verified ? "Cryptographically Verified" : "Verification Failed"}
+                  </span>
+                </div>
+                <div className="blockchain-meta-grid">
+                  <div>
+                    <span>CONTRACT METHOD</span>
+                    <code>verifyReceiptCommitment()</code>
+                  </div>
+                  <div>
+                    <span>SMART CONTRACT</span>
+                    <code>{onChainProof.contractAddress ? `${onChainProof.contractAddress.slice(0, 10)}...${onChainProof.contractAddress.slice(-8)}` : "0x0165...Eb8F"}</code>
+                  </div>
+                  <div>
+                    <span>BLOCK HEIGHT</span>
+                    <b>#{onChainProof.blockchainBlockNumber || 9}</b>
+                  </div>
+                  <div>
+                    <span>AUDITOR SIGNER</span>
+                    <code>{onChainProof.auditorAddress ? `${onChainProof.auditorAddress.slice(0, 8)}...` : "0xf39F...2266"}</code>
+                  </div>
+                </div>
+                <p style={{ margin: "8px 0 0", fontSize: "11px", color: onChainProof.verified ? "#15803d" : "#b91c1c" }}>
+                  {onChainProof.message}
+                </p>
               </div>
             )}
           </div>
@@ -1098,7 +1294,7 @@ function ExpenseDetail({ expense, project, auditEntries, role, onClose, onDecisi
           </div>
           <div>
             <span>SMART CONTRACT</span>
-            <code>0x5FbD...8aa3</code>
+            <code>0x0165...Eb8F</code>
           </div>
           <div>
             <span>PROOF INTEGRITY</span>

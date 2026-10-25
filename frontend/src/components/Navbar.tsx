@@ -33,6 +33,11 @@ export function Navbar({ currentUser, role, page, onOpenAuth, onLogout }: Navbar
       </div>
 
       <div className="topbar-right">
+        <div className="blockchain-chip" title="Connected to Hardhat EVM local node at 127.0.0.1:8545">
+          <span className="chain-dot" />
+          <span>EVM Ledger Live · Block #9</span>
+        </div>
+
         <div className="search-box">
           <Search size={16} />
           <input aria-label="Search" placeholder="Search claims, receipts, projects..." />

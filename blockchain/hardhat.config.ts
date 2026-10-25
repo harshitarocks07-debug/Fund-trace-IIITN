@@ -3,9 +3,17 @@ import "@nomicfoundation/hardhat-toolbox";
 import "dotenv/config";
 
 const privateKey = (process.env.SEPOLIA_PRIVATE_KEY || "").trim();
+const polygonAmoyPrivateKey = (process.env.POLYGON_AMOY_PRIVATE_KEY || "").trim();
 
 const validPrivateKey =
   /^(0x)?[0-9a-fA-F]{64}$/.test(privateKey);
+const validPolygonAmoyPrivateKey =
+  /^(0x)?[0-9a-fA-F]{64}$/.test(polygonAmoyPrivateKey);
+
+function accountsFor(key: string, isValid: boolean): string[] {
+  if (!isValid) return [];
+  return [key.startsWith("0x") ? key : `0x${key}`];
+}
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -30,13 +38,13 @@ const config: HardhatUserConfig = {
     sepolia: {
       url: process.env.SEPOLIA_RPC_URL || "http://127.0.0.1:8545",
       chainId: 11155111,
-      accounts: validPrivateKey
-        ? [
-            privateKey.startsWith("0x")
-              ? privateKey
-              : `0x${privateKey}`,
-          ]
-        : [],
+      accounts: accountsFor(privateKey, validPrivateKey),
+    },
+
+    polygonAmoy: {
+      url: process.env.POLYGON_AMOY_RPC_URL || "http://127.0.0.1:8545",
+      chainId: 80002,
+      accounts: accountsFor(polygonAmoyPrivateKey, validPolygonAmoyPrivateKey),
     },
   },
 

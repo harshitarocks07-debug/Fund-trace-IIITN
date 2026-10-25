@@ -19,6 +19,15 @@ class DonationBase(BaseModel):
     @model_validator(mode="before")
     def sync_project_id(cls, data):
         if isinstance(data, dict):
+            for external, internal in (
+                ("donorName", "donor_name"),
+                ("donorEmail", "donor_email"),
+                ("donorPhone", "donor_phone"),
+                ("paymentMethod", "payment_method"),
+                ("paymentReference", "payment_reference"),
+            ):
+                if external in data and internal not in data:
+                    data[internal] = data[external]
             if "projectId" in data and not data.get("project_id"):
                 data["project_id"] = data["projectId"]
             elif "project_id" in data and data.get("project_id") is not None and not data.get("projectId"):
@@ -30,7 +39,7 @@ class DonationBase(BaseModel):
         if not v:
             return "UPI"
         allowed = {"UPI", "CARD", "BANK_TRANSFER", "CRYPTO", "CHEQUE"}
-        upper_v = v.upper().strip()
+        upper_v = v.upper().strip().replace(" ", "_")
         if upper_v not in allowed:
             raise ValueError(f"Invalid payment method: '{v}'. Permitted values: {', '.join(sorted(allowed))}")
         return upper_v
@@ -39,6 +48,28 @@ class DonationBase(BaseModel):
 class DonationCreate(DonationBase):
     tx_hash: Optional[str] = Field(None, description="Optional custom transaction hash or ref")
     status: str = Field("CONFIRMED", description="CONFIRMED, PENDING, FAILED")
+    donor_phone: Optional[str] = None
+    payment_reference: Optional[str] = None
+
+    @property
+    def paymentReference(self) -> Optional[str]:
+        return self.payment_reference
+
+    @property
+    def donorName(self) -> Optional[str]:
+        return self.donor_name
+
+    @property
+    def donorEmail(self) -> Optional[str]:
+        return self.donor_email
+
+    @property
+    def donorPhone(self) -> Optional[str]:
+        return self.donor_phone
+
+    @property
+    def paymentMethod(self) -> str:
+        return self.payment_method
 
     @model_validator(mode="after")
     def set_defaults(self):
@@ -76,7 +107,6 @@ class DonationResponse(DonationBase):
 
     model_config = ConfigDict(from_attributes=True)
 
-
 class DonationOut(BaseModel):
     id: str
     projectId: str = ""
@@ -84,9 +114,17 @@ class DonationOut(BaseModel):
     amount: float
     date: str = ""
     reference: str = ""
+    paymentStatus: str = "Pending"
+    paymentMethod: str = "Bank Transfer"
+    paymentTxHash: Optional[str] = None
+    paymentVerifiedAt: Optional[str] = None
+    blockchainStatus: str = "Not submitted"
+    commitmentHash: Optional[str] = None
+    blockchainTxHash: Optional[str] = None
+    blockchainBlockNumber: Optional[int] = None
+    blindingSalt: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
-
 
 class DonationReceipt(BaseModel):
     receipt_number: str
@@ -125,3 +163,36 @@ class DonationStats(BaseModel):
     by_project: List[Dict[str, Any]] = []
     monthly_trend: List[Dict[str, Any]] = []
     recent_donors: List[Dict[str, Any]] = []
+
+class DonationCommitmentVerifyRequest(BaseModel):
+    donationId: str
+    projectId: str
+    amount: float
+    paymentReference: str
+    blindingSalt: str
+
+class DonationCommitmentVerifyResponse(BaseModel):
+    donationId: str
+    verified: bool
+    onChainVerified: bool
+    isHashMatch: bool
+    commitmentHash: str
+    projectId: str
+    amount: float
+    blockchainBlockNumber: Optional[int] = None
+    contractAddress: Optional[str] = None
+    message: str
+    piiStatus: str = "ZERO_PII_EXPOSED: Verified without revealing donor name, email, or contact information."
+
+class DonationPaymentVerifyRequest(BaseModel):
+    paymentTxHash: str
+    paymentMethod: Optional[str] = "Bank Settlement"
+    notes: Optional[str] = None
+
+class DonationPaymentVerifyResponse(BaseModel):
+    donationId: str
+    paymentStatus: str
+    paymentTxHash: str
+    paymentVerifiedAt: str
+    paymentMethod: str
+    message: str

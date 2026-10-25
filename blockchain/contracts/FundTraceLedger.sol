@@ -76,12 +76,30 @@ contract FundTraceLedger {
         bool exists;
     }
 
+    // --- Privacy-Preserving Zero-PII Donation Commitments ---
+    // Sensitive personal information (donor name, email, phone number, internal donor ID,
+    // donation reference, and private blinding salt) is kept exclusively in the private backend database.
+    // The smart contract stores only the cryptographic commitment and project association.
+    // Individual donation amounts and precise timestamps are NOT stored in commitment records
+    // or emitted in events, shielding donors from correlation and de-anonymization attacks.
+    struct DonationCommitment {
+        string id;                 // Opaque donation identifier (e.g. "DON-001"), never the internal database ID
+        string projectId;          // Associated project
+        bytes32 commitmentHash;    // keccak256(donationId || projectId || amount || paymentReference || blindingSalt)
+        uint256 blockNumber;       // Coarse block number for ordering (no second-precision timestamps)
+        bool exists;
+    }
+
     // --- State Storage ---
     mapping(string => Project) public projects;
     string[] public projectIds;
 
     mapping(string => Donation) public donations;
     string[] public donationIds;
+
+    mapping(string => DonationCommitment) public donationCommitments;
+    string[] public donationCommitmentIds;
+    mapping(bytes32 => string) public commitmentToDonation;
 
     mapping(string => ExpenseRecord) public expenses;
     string[] public expenseIds;
@@ -112,6 +130,19 @@ contract FundTraceLedger {
         uint256 amount,
         string earmarkTag,
         string paymentReference,
+        uint256 timestamp
+    );
+
+    event DonationCommitmentAnchored(
+        string indexed donationId,
+        string indexed projectId,
+        bytes32 indexed commitmentHash,
+        uint256 blockNumber
+    );
+
+    event DonationPaymentVerified(
+        string indexed donationId,
+        bytes32 indexed paymentTxHash,
         uint256 timestamp
     );
 
@@ -214,50 +245,174 @@ contract FundTraceLedger {
         emit ProjectRegistered(projectId, name, ngoAddress, budget, block.timestamp);
     }
 
-    // --- Donation Anchoring ---
+    // --- Legacy / Deprecated Donation Anchoring ---
+    /**
+     * @notice DEPRECATED: Recording plain donor addresses, payment references, or raw
+     * personal information on-chain violates Zero-PII privacy requirements.
+     * All donations must use anchorDonationCommitment instead.
+     */
     function anchorDonation(
+        string calldata,
+        string calldata,
+        address,
+        uint256,
+        string calldata,
+        string calldata
+    ) external pure {
+        revert("Deprecated: Use anchorDonationCommitment to ensure zero-PII storage");
+    }
+
+    /**
+     * @notice Updates the public financial aggregate for a project.
+     * Allows project-level financial transparency without publishing individual donor
+     * contribution amounts or timing.
+     */
+    function recordProjectDonationAggregate(
+        string calldata projectId,
+        uint256 aggregateAmount
+    ) external onlyNgoOrOwner {
+        require(projects[projectId].createdAt > 0, "Project does not exist");
+        projects[projectId].totalDonated += aggregateAmount;
+    }
+
+    /**
+     * @notice Anchors a privacy-preserving donation commitment on-chain.
+     * Keeps donor names, emails, phone numbers, internal donor IDs, donation references,
+     * individual amounts, and precise timestamps strictly off-chain in the private database.
+     * Maintains public transparency solely through project-level financial aggregates.
+     *
+     * @param donationId Unique opaque donation identifier (e.g. "DON-001"), NEVER internal user ID
+     * @param projectId Associated project ID
+     * @param aggregateAmount Donated currency amount (increments project aggregate only, NOT stored in commitment record)
+     * @param commitmentHash Keccak-256 commitment: H(donationId || projectId || amount || paymentReference || blindingSalt)
+     */
+    function anchorDonationCommitment(
         string calldata donationId,
         string calldata projectId,
-        address donor,
-        uint256 amount,
-        string calldata earmarkTag,
-        string calldata paymentReference
+        uint256 aggregateAmount,
+        bytes32 commitmentHash
     ) external onlyNgoOrOwner {
         require(bytes(donationId).length > 0, "Empty donation ID");
         require(projects[projectId].createdAt > 0, "Project does not exist");
-        require(donations[donationId].timestamp == 0, "Donation already recorded");
-        require(amount > 0, "Amount must be positive");
+        require(commitmentHash != bytes32(0), "Empty commitment hash");
+        require(!donationCommitments[donationId].exists, "Donation commitment already recorded");
+        require(bytes(commitmentToDonation[commitmentHash]).length == 0, "Duplicate commitment hash");
 
-        donations[donationId] = Donation({
+        // The commitment record on-chain intentionally omits individual amounts and precise timestamps
+        // to protect against linkage and correlation attacks.
+        donationCommitments[donationId] = DonationCommitment({
             id: donationId,
             projectId: projectId,
-            donor: donor,
-            amount: amount,
-            earmarkTag: earmarkTag,
-            paymentReference: paymentReference,
-            timestamp: block.timestamp
+            commitmentHash: commitmentHash,
+            blockNumber: block.number,
+            exists: true
         });
 
-        projects[projectId].totalDonated += amount;
-        donationIds.push(donationId);
+        commitmentToDonation[commitmentHash] = donationId;
+        donationCommitmentIds.push(donationId);
 
-        // Record Purpose-Bound Allocation Condition
-        if (bytes(earmarkTag).length > 0) {
-            EarmarkCondition storage ec = earmarkConditions[projectId][earmarkTag];
-            ec.tag = earmarkTag;
-            ec.allocatedAmount += amount;
-            ec.exists = true;
+        // Update project-level financial aggregate publicly
+        if (aggregateAmount > 0) {
+            projects[projectId].totalDonated += aggregateAmount;
         }
 
-        emit DonationAnchored(
+        // Public event contains NO PII, NO individual amount, and NO second-level timestamp
+        emit DonationCommitmentAnchored(
             donationId,
             projectId,
-            donor,
-            amount,
-            earmarkTag,
-            paymentReference,
-            block.timestamp
+            commitmentHash,
+            block.number
         );
+    }
+
+    /**
+     * @notice Variant for strict calldata confidentiality:
+     * Anchors commitment without specifying any amount in transaction calldata.
+     */
+    function anchorDonationCommitmentBlinded(
+        string calldata donationId,
+        string calldata projectId,
+        bytes32 commitmentHash
+    ) external onlyNgoOrOwner {
+        require(bytes(donationId).length > 0, "Empty donation ID");
+        require(projects[projectId].createdAt > 0, "Project does not exist");
+        require(commitmentHash != bytes32(0), "Empty commitment hash");
+        require(!donationCommitments[donationId].exists, "Donation commitment already recorded");
+        require(bytes(commitmentToDonation[commitmentHash]).length == 0, "Duplicate commitment hash");
+
+        donationCommitments[donationId] = DonationCommitment({
+            id: donationId,
+            projectId: projectId,
+            commitmentHash: commitmentHash,
+            blockNumber: block.number,
+            exists: true
+        });
+
+        commitmentToDonation[commitmentHash] = donationId;
+        donationCommitmentIds.push(donationId);
+
+        emit DonationCommitmentAnchored(
+            donationId,
+            projectId,
+            commitmentHash,
+            block.number
+        );
+    }
+
+    /**
+     * @notice Allows authorized parties to verify a donation record commitment without publishing donor PII.
+     * Does not expose individual donation amounts or timestamps from contract storage.
+     * @param donationId The donation identifier
+     * @param presentedCommitmentHash The cryptographic commitment presented for verification
+     */
+    function verifyDonationCommitment(
+        string calldata donationId,
+        bytes32 presentedCommitmentHash
+    ) external view returns (
+        bool matches,
+        string memory projectId,
+        uint256 blockNumber
+    ) {
+        DonationCommitment memory record = donationCommitments[donationId];
+        if (!record.exists) {
+            return (false, "", 0);
+        }
+        bool isMatch = (record.commitmentHash == presentedCommitmentHash);
+        return (
+            isMatch,
+            record.projectId,
+            record.blockNumber
+        );
+    }
+
+    /**
+     * @notice Verifies donation credentials against on-chain commitment without revealing donor identity.
+     * Dynamically verifies Keccak-256(donationId || projectId || amount || paymentReference || blindingSalt)
+     * without storing any sensitive preimages in contract storage.
+     */
+    function verifyDonationPreimage(
+        string calldata donationId,
+        string calldata projectId,
+        uint256 amount,
+        string calldata paymentReference,
+        bytes32 blindingSalt
+    ) external view returns (
+        bool valid,
+        uint256 blockNumber
+    ) {
+        DonationCommitment memory record = donationCommitments[donationId];
+        if (!record.exists) {
+            return (false, 0);
+        }
+        bytes32 computedHash = keccak256(
+            abi.encodePacked(donationId, projectId, amount, paymentReference, blindingSalt)
+        );
+        bool isValid = (record.commitmentHash == computedHash);
+        return (isValid, record.blockNumber);
+    }
+
+    function getDonationCommitmentCount() external view returns (uint256) {
+        return donationCommitmentIds.length;
     }
 
     /**

@@ -89,6 +89,11 @@ class ExpenseCreate(ExpenseBase):
     extractedVendor: Optional[str] = None
     extractedInvoiceNumber: Optional[str] = None
     extractedDate: Optional[str] = None
+    extractedDueDate: Optional[str] = None
+    extractedCurrency: Optional[str] = None
+    extractedArithmeticConsistent: Optional[bool] = None
+    extractedPaymentStatus: Optional[str] = None
+    extractedMissingFields: List[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_create_fields(self):

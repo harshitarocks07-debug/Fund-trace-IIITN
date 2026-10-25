@@ -9,6 +9,7 @@ from app.api.v1.endpoints import (
     audit,
     blockchain,
     flows,
+    fiat_settlements,
 )
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(receipts.router, prefix="/receipts", tags=["Receipts &
 api_router.include_router(audit.router, prefix="/audit", tags=["Audit Log"])
 api_router.include_router(blockchain.router, prefix="/blockchain", tags=["Blockchain Impact Ledger"])
 api_router.include_router(flows.router, prefix="/flows", tags=["Multi-Hop Financial Flow Tracker"])
+api_router.include_router(fiat_settlements.router, prefix="/fiat-settlements", tags=["Fiat Off-Ramp Settlements"])

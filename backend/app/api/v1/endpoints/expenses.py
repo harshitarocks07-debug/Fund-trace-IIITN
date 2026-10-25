@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 from typing import Optional, List, Union, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -237,7 +238,6 @@ def update_expense_status(
     expense = expense_service.update_expense_status(db, expense_id, status_update, reviewer=reviewer)
     return _to_response(expense)
 
-
 @router.post("/{expense_id}/review", response_model=ExpenseResponse)
 def review_expense(
     expense_id: str,
@@ -290,7 +290,6 @@ def review_expense(
     db.add(audit_entry)
     db.commit()
     db.refresh(expense)
-
     return _to_response(expense)
 
 

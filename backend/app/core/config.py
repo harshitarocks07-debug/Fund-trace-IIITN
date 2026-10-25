@@ -55,5 +55,12 @@ class Settings:
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     )
 
+    SEPOLIA_RPC_URL: str = os.getenv("SEPOLIA_RPC_URL", "")
+    SEPOLIA_ESCROW_ADDRESS: str = os.getenv("SEPOLIA_ESCROW_ADDRESS", "")
+    POLYGON_AMOY_RPC_URL: str = os.getenv("POLYGON_AMOY_RPC_URL", "")
+    POLYGON_AMOY_ESCROW_ADDRESS: str = os.getenv("POLYGON_AMOY_ESCROW_ADDRESS", "")
+
+    FIAT_WEBHOOK_PROVIDER: str = os.getenv("FIAT_WEBHOOK_PROVIDER", "")
+    FIAT_WEBHOOK_SECRET: str = os.getenv("FIAT_WEBHOOK_SECRET", "")
 
 settings = Settings()

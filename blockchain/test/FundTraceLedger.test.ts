@@ -60,7 +60,7 @@ describe("FundTraceLedger", function () {
     expect(summary[4]).to.equal(true);
   });
 
-  it("should anchor an earmarked donation", async function () {
+  it("should reject deprecated anchorDonation to enforce Zero-PII privacy policy", async function () {
     await ledger
       .connect(ngo)
       .registerProject("PRJ-001", "School Construction", ngo.address, 1000000);
@@ -74,10 +74,7 @@ describe("FundTraceLedger", function () {
         "Water infrastructure",
         "PAY-8K2F19"
       )
-    ).to.emit(ledger, "DonationAnchored");
-
-    const summary = await ledger.getProjectSummary("PRJ-001");
-    expect(summary[2]).to.equal(500000);
+    ).to.be.revertedWith("Deprecated: Use anchorDonationCommitment to ensure zero-PII storage");
   });
 
   it("should anchor auditor review decision with cryptographic receipt hash", async function () {
@@ -311,6 +308,95 @@ describe("FundTraceLedger", function () {
       );
 
       expect(result.matches).to.equal(false);
+    });
+  });
+
+  describe("Zero-PII Donation Commitments", function () {
+    const donationId = "DON-TEST-001";
+    const projectId = "PRJ-001";
+    const amount = 500000;
+    const paymentRef = "PAY-REF-99";
+    const salt = ethers.keccak256(ethers.toUtf8Bytes("random_blinding_salt_123"));
+
+    // Commitment = H(donationId || projectId || amount || paymentRef || salt)
+    const commitmentHash = ethers.solidityPackedKeccak256(
+      ["string", "string", "uint256", "string", "bytes32"],
+      [donationId, projectId, amount, paymentRef, salt]
+    );
+
+    beforeEach(async function () {
+      await ledger
+        .connect(ngo)
+        .registerProject(projectId, "Clean Water Well", ngo.address, 1000000);
+    });
+
+    it("should anchor a privacy-preserving donation commitment and update project aggregates", async function () {
+      await expect(
+        ledger
+          .connect(ngo)
+          .anchorDonationCommitment(donationId, projectId, amount, commitmentHash)
+      )
+        .to.emit(ledger, "DonationCommitmentAnchored")
+        .withArgs(donationId, projectId, commitmentHash, (val: any) => val > 0);
+
+      const summary = await ledger.getProjectSummary(projectId);
+      expect(summary[2]).to.equal(amount); // totalDonated updated publicly
+
+      const count = await ledger.getDonationCommitmentCount();
+      expect(count).to.equal(1);
+    });
+
+    it("should verify donation commitment correctly without publishing donor PII", async function () {
+      await ledger
+        .connect(ngo)
+        .anchorDonationCommitment(donationId, projectId, amount, commitmentHash);
+
+      const verifyRes = await ledger.verifyDonationCommitment(donationId, commitmentHash);
+      expect(verifyRes[0]).to.equal(true); // matches
+      expect(verifyRes[1]).to.equal(projectId);
+      expect(verifyRes[2]).to.be.greaterThan(0); // blockNumber
+
+      const fakeHash = ethers.keccak256(ethers.toUtf8Bytes("fake-commitment"));
+      const fakeRes = await ledger.verifyDonationCommitment(donationId, fakeHash);
+      expect(fakeRes[0]).to.equal(false);
+    });
+
+    it("should verify preimage credentials on-chain", async function () {
+      await ledger
+        .connect(ngo)
+        .anchorDonationCommitment(donationId, projectId, amount, commitmentHash);
+
+      const preimageRes = await ledger.verifyDonationPreimage(
+        donationId,
+        projectId,
+        amount,
+        paymentRef,
+        salt
+      );
+      expect(preimageRes[0]).to.equal(true);
+
+      // Wrong salt fails verification
+      const wrongSalt = ethers.keccak256(ethers.toUtf8Bytes("wrong-salt"));
+      const failRes = await ledger.verifyDonationPreimage(
+        donationId,
+        projectId,
+        amount,
+        paymentRef,
+        wrongSalt
+      );
+      expect(failRes[0]).to.equal(false);
+    });
+
+    it("should prevent duplicate commitment hashes", async function () {
+      await ledger
+        .connect(ngo)
+        .anchorDonationCommitment(donationId, projectId, amount, commitmentHash);
+
+      await expect(
+        ledger
+          .connect(ngo)
+          .anchorDonationCommitment("DON-TEST-002", projectId, amount, commitmentHash)
+      ).to.be.revertedWith("Duplicate commitment hash");
     });
   });
 });

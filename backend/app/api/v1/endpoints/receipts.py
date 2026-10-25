@@ -39,6 +39,8 @@ from app.services.receipt_service import (
     get_expense_ngo_id,
 )
 from app.services.ocr_service import (
+    check_duplicate_file,
+    check_duplicate_invoice,
     extract_receipt_data,
     process_receipt_ocr,
 )
@@ -153,6 +155,7 @@ def ocr_extract_file(
         ...,
         description="Receipt document or image to analyze",
     ),
+    db: Session = Depends(get_db),
     current_user: User = Depends(require_ngo_admin_or_auditor),
 ):
     """
@@ -161,11 +164,22 @@ def ocr_extract_file(
     """
     full_bytes, canonical_mime = _read_limited_file(file)
 
-    return extract_receipt_data(
+    ocr_result = extract_receipt_data(
         file_bytes=full_bytes,
         filename=os.path.basename(file.filename or "receipt"),
         mime_type=canonical_mime,
     )
+    ocr_result.duplicateInvoice = check_duplicate_invoice(db, ocr_result)
+    ocr_result.duplicateFile = check_duplicate_file(db, ocr_result)
+    if ocr_result.duplicateInvoice:
+        ocr_result.warnings.append(
+            "Invoice number and vendor match a previously submitted invoice; review for a duplicate claim."
+        )
+    if ocr_result.duplicateFile:
+        ocr_result.warnings.append(
+            "The uploaded file fingerprint matches an existing receipt or expense claim."
+        )
+    return ocr_result
 
 
 # -------------------------------------------------------------------
@@ -364,9 +378,26 @@ def verify_receipt_hash(
         ):
             ocr_result = ReceiptOCRResult(
                 vendor=receipt.extracted_vendor,
+                vendorAddress=receipt.extracted_vendor_address,
+                gstin=receipt.extracted_gstin,
                 invoiceNumber=receipt.extracted_invoice_number,
                 date=receipt.extracted_date,
+                description=receipt.extracted_description,
+                quantity=receipt.extracted_quantity,
+                quantityUnit=receipt.extracted_quantity_unit,
+                unitPrice=receipt.extracted_unit_price,
+                subtotal=receipt.extracted_subtotal,
+                taxAmount=receipt.extracted_tax_amount,
                 amount=receipt.extracted_amount,
+                currency=receipt.extracted_currency,
+                paymentStatus=receipt.extracted_payment_status,
+                paymentReference=receipt.extracted_payment_reference,
+                dueDate=receipt.extracted_due_date,
+                arithmeticConsistent=receipt.arithmetic_consistent,
+                duplicateInvoice=receipt.duplicate_invoice,
+                duplicateFile=receipt.duplicate_file,
+                originalFilename=receipt.original_filename,
+                fileHash=receipt.sha256_hash,
                 confidence=receipt.ocr_confidence or 0.0,
                 ocrStatus=receipt.ocr_status or "COMPLETED",
                 rawText=receipt.raw_text,

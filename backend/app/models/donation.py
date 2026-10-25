@@ -14,11 +14,11 @@ class Donation(Base):
     ngo_id = Column(Integer, ForeignKey("ngos.id", ondelete="CASCADE"), nullable=True, index=True)
     project_id = Column(String(50), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     donor_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-
     # Donor Information
     donor_name = Column(String(255), nullable=False, index=True)
     donor_email = Column(String(255), nullable=True)
     donor_pan = Column(String(20), nullable=True)  # Required for Indian 80G tax receipt
+    donor_phone = Column(String(50), nullable=True)
     is_anonymous = Column(Boolean, default=False)
 
     # Financial Information
@@ -30,6 +30,16 @@ class Donation(Base):
     # On-Chain and Statutory Verification
     tx_hash = Column(String(100), nullable=True, unique=True, index=True)
     block_number = Column(Integer, nullable=True)
+    blockchain_status = Column(String(50), nullable=False, default="Not submitted")
+    blockchain_tx_hash = Column(String(100), nullable=True)
+    blockchain_block_number = Column(Integer, nullable=True)
+    blockchain_anchored_at = Column(DateTime(timezone=True), nullable=True)
+    blinding_salt = Column(String(66), nullable=True)
+    commitment_hash = Column(String(66), nullable=True, index=True)
+    payment_status = Column(String(50), nullable=False, default="Pending")
+    payment_tx_hash = Column(String(100), nullable=True)
+    payment_verified_at = Column(DateTime(timezone=True), nullable=True)
+    payment_verified_by = Column(String(255), nullable=True)
     receipt_number = Column(String(50), nullable=True, unique=True, index=True)  # 80G Tax receipt ref
     tax_benefit_claimed = Column(Boolean, default=False)
     date = Column(String(50), nullable=True)

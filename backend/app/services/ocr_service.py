@@ -1,12 +1,14 @@
 import os
 import re
 import zlib
+import hashlib
 import shutil
 import subprocess
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from app.models.receipt import Receipt
+from app.models.expense import Expense
 from app.schemas.receipt import ReceiptOCRResult
 
 # Common date formats in Indian and international invoices
@@ -26,7 +28,7 @@ DATE_FORMATS = (
 
 def clean_text_line(line: str) -> str:
     """Strip whitespace and weird characters from extracted text line."""
-    return re.sub(r"[^\x20-\x7E\u0900-\u097F]", " ", line).strip()
+    return re.sub(r"[^\x20-\x7E\u0900-\u097F₹€£]", " ", line).strip()
 
 def parse_date_to_iso(raw_date_str: str) -> Optional[str]:
     """Parse various invoice date formats and normalize to ISO YYYY-MM-DD."""
@@ -373,6 +375,185 @@ def extract_amount(text: str) -> Optional[float]:
 
     return None
 
+def _labeled_value(text: str, labels: str) -> Optional[str]:
+    match = re.search(
+        rf"(?im)^\s*(?:{labels})\s*(?:[:#\-]\s*)?(.+?)\s*$",
+        text,
+    )
+    if not match:
+        return None
+    value = clean_text_line(match.group(1)).strip(" :#-")
+    return value or None
+
+def _labeled_amount(text: str, labels: str) -> Optional[float]:
+    value = _labeled_value(text, labels)
+    if not value:
+        return None
+    match = re.search(
+        r"(?<![A-Za-z])(?:INR|Rs\.?|₹)?\s*"
+        r"([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)",
+        value,
+        re.IGNORECASE,
+    )
+    return parse_currency_amount(match.group(1)) if match else None
+
+def extract_vendor_address(text: str) -> Optional[str]:
+    return _labeled_value(
+        text,
+        r"(?:Vendor|Supplier|Seller|Company)\s+Address|Address",
+    )
+
+def extract_gstin(text: str) -> Optional[str]:
+    match = re.search(
+        r"\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b",
+        text,
+        re.IGNORECASE,
+    )
+    return match.group(1).upper() if match else None
+
+def extract_description(text: str) -> Optional[str]:
+    description = _labeled_value(
+        text,
+        r"(?:Description\s+of\s+(?:Goods(?:/Services)?|Services|Goods\s+or\s+Services)|"
+        r"Description|Particulars)",
+    )
+    return description or _labeled_value(text, r"Items?")
+
+def extract_quantity(text: str) -> Tuple[Optional[float], Optional[str]]:
+    value = _labeled_value(text, r"(?:Quantity|Qty)")
+    if not value:
+        return None, None
+    match = re.match(r"\s*([0-9]+(?:\.[0-9]+)?)\s*(.*)", value)
+    if not match:
+        return None, None
+    unit = match.group(2).strip(" ,.-") or None
+    try:
+        return float(match.group(1)), unit
+    except ValueError:
+        return None, unit
+
+def extract_unit_price(text: str) -> Optional[float]:
+    return _labeled_amount(text, r"(?:Unit\s+Price|Price\s+Per\s+Unit|Rate)")
+
+def extract_subtotal(text: str) -> Optional[float]:
+    return _labeled_amount(text, r"(?:Sub\s*total|Taxable\s+Value)")
+
+def extract_tax_amount(text: str) -> Optional[float]:
+    component_labels = (r"CGST", r"SGST", r"IGST")
+    components = [
+        _labeled_amount(text, label)
+        for label in component_labels
+    ]
+    found_components = [amount for amount in components if amount is not None]
+    if found_components:
+        return round(sum(found_components), 2)
+    return _labeled_amount(text, r"(?:GST|Total\s+Tax|Tax(?!\s*Invoice))(?:\s+Amount)?")
+
+def extract_currency(text: str) -> Optional[str]:
+    for pattern, currency in (
+        (r"\bINR\b|₹|\bRs\.?", "INR"),
+        (r"\bUSD\b|\$", "USD"),
+        (r"\bEUR\b|€", "EUR"),
+        (r"\bGBP\b|£", "GBP"),
+        (r"\bAED\b", "AED"),
+    ):
+        if re.search(pattern, text, re.IGNORECASE):
+            return currency
+    return None
+
+def extract_payment_status(text: str) -> Optional[str]:
+    normalized = text.lower()
+    if re.search(r"\bpartially\s+paid\b|\bpartial\s+payment\b", normalized):
+        return "Partially Paid"
+    if re.search(r"\b(unpaid|not\s+paid|payment\s+due)\b", normalized):
+        return "Unpaid"
+    if re.search(r"\b(paid|payment\s+received)\b", normalized):
+        return "Paid"
+    return None
+
+def extract_payment_reference(text: str) -> Optional[str]:
+    value = _labeled_value(
+        text,
+        r"(?:UPI\s+Reference|Payment\s+Reference|Transaction\s+(?:ID|Reference)|"
+        r"UTR(?:\s+(?:Number|No))?|Reference\s+(?:Number|No))",
+    )
+    if not value:
+        return None
+    return value.split()[0].strip(" ,;") or None
+
+def extract_labeled_date(text: str, labels: str) -> Optional[str]:
+    value = _labeled_value(text, labels)
+    if not value:
+        return None
+    date_match = re.search(
+        r"([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}|"
+        r"[0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}|"
+        r"[0-9]{1,2}\s+[A-Za-z]{3,9}\s+[0-9]{4}|"
+        r"[A-Za-z]{3,9}\s+[0-9]{1,2},?\s+[0-9]{4})",
+        value,
+    )
+    return parse_date_to_iso(date_match.group(1)) if date_match else None
+
+def check_duplicate_invoice(
+    db: Session,
+    result: ReceiptOCRResult,
+    exclude_receipt_id: Optional[str] = None,
+) -> bool:
+    """Flag a repeated invoice number from the same vendor for auditor review."""
+    if not result.invoiceNumber or not result.vendor:
+        return False
+
+    def normalize(value: Optional[str]) -> str:
+        return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+    invoice_number = normalize(result.invoiceNumber)
+    vendor = normalize(result.vendor)
+    if not invoice_number or not vendor:
+        return False
+
+    receipt_query = db.query(Receipt).filter(
+        Receipt.extracted_invoice_number.isnot(None),
+        Receipt.extracted_vendor.isnot(None),
+    )
+    if exclude_receipt_id:
+        receipt_query = receipt_query.filter(Receipt.id != exclude_receipt_id)
+    receipts = receipt_query.all()
+    if any(
+        normalize(receipt.extracted_invoice_number) == invoice_number
+        and normalize(receipt.extracted_vendor) == vendor
+        for receipt in receipts
+    ):
+        return True
+
+    expenses = db.query(Expense).filter(
+        Expense.invoice_number.isnot(None),
+        Expense.vendor.isnot(None),
+    ).all()
+    return any(
+        normalize(expense.extracted_invoice_number or expense.invoice_number) == invoice_number
+        and normalize(expense.extracted_vendor or expense.vendor) == vendor
+        for expense in expenses
+    )
+
+def check_duplicate_file(
+    db: Session,
+    result: ReceiptOCRResult,
+    exclude_receipt_id: Optional[str] = None,
+) -> bool:
+    if not result.fileHash:
+        return False
+    receipt_query = db.query(Receipt.id).filter(
+        Receipt.sha256_hash == result.fileHash
+    )
+    if exclude_receipt_id:
+        receipt_query = receipt_query.filter(Receipt.id != exclude_receipt_id)
+    receipt_exists = receipt_query.first()
+    if receipt_exists:
+        return True
+    return db.query(Expense.id).filter(
+        Expense.receipt_hash == result.fileHash
+    ).first() is not None
+
 def extract_receipt_data(file_bytes: bytes, filename: str, mime_type: str) -> ReceiptOCRResult:
     """
     Main OCR extraction entry point.
@@ -389,9 +570,42 @@ def extract_receipt_data(file_bytes: bytes, filename: str, mime_type: str) -> Re
 
     # 2. Extract structured fields
     vendor = extract_vendor(raw_text) if raw_text else None
+    vendor_address = extract_vendor_address(raw_text) if raw_text else None
+    gstin = extract_gstin(raw_text) if raw_text else None
     invoice_number = extract_invoice_number(raw_text) if raw_text else None
     date_val = extract_date(raw_text) if raw_text else None
+    description = extract_description(raw_text) if raw_text else None
+    quantity, quantity_unit = extract_quantity(raw_text) if raw_text else (None, None)
+    unit_price = extract_unit_price(raw_text) if raw_text else None
+    subtotal = extract_subtotal(raw_text) if raw_text else None
+    tax_amount = extract_tax_amount(raw_text) if raw_text else None
     amount = extract_amount(raw_text) if raw_text else None
+    currency = extract_currency(raw_text) if raw_text else None
+    payment_status = extract_payment_status(raw_text) if raw_text else None
+    payment_reference = extract_payment_reference(raw_text) if raw_text else None
+    due_date = (
+        extract_labeled_date(raw_text, r"(?:Payment\s+)?Due\s+Date")
+        if raw_text else None
+    )
+
+    arithmetic_consistent = None
+    if subtotal is not None and tax_amount is not None and amount is not None:
+        arithmetic_consistent = abs(subtotal + tax_amount - amount) <= 0.02
+        if not arithmetic_consistent:
+            warnings.append("Subtotal plus tax does not match the invoice total; verify the arithmetic.")
+    if quantity is not None and unit_price is not None and subtotal is not None:
+        quantity_total = quantity * unit_price
+        if abs(quantity_total - subtotal) > max(0.02, subtotal * 0.01):
+            warnings.append("Quantity multiplied by unit price does not match the subtotal; verify the line item.")
+
+    if date_val and due_date and due_date < date_val:
+        warnings.append("Due date is earlier than the invoice date; verify both dates.")
+    if date_val:
+        try:
+            if datetime.strptime(date_val, "%Y-%m-%d").date() > datetime.now().date():
+                warnings.append("Invoice date is in the future; verify the document date.")
+        except ValueError:
+            pass
 
     # Fallback heuristic: If filename contains hints (e.g. invoice_101.pdf)
     if not invoice_number:
@@ -421,14 +635,54 @@ def extract_receipt_data(file_bytes: bytes, filename: str, mime_type: str) -> Re
     else:
         warnings.append("Total monetary amount could not be parsed from receipt.")
 
+    missing_fields = [
+        label
+        for label, value in (
+            ("vendor", vendor),
+            ("vendor address", vendor_address),
+            ("GSTIN", gstin),
+            ("invoice number", invoice_number),
+            ("invoice date", date_val),
+            ("description of goods or services", description),
+            ("quantity", quantity),
+            ("unit price", unit_price),
+            ("subtotal", subtotal),
+            ("tax amount", tax_amount),
+            ("total amount", amount),
+            ("currency", currency),
+            ("payment status", payment_status),
+            ("payment reference", payment_reference),
+            ("due date", due_date),
+        )
+        if value is None
+    ]
+    if missing_fields:
+        warnings.append("Some invoice fields were not found; review the missing fields list.")
+
     confidence = round(fields_found / 4.0, 2)
     ocr_status = "COMPLETED" if fields_found > 0 else "NO_TEXT_FOUND"
 
     return ReceiptOCRResult(
         vendor=vendor,
+        vendorAddress=vendor_address,
+        gstin=gstin,
         invoiceNumber=invoice_number,
         date=date_val,
+        description=description,
+        quantity=quantity,
+        quantityUnit=quantity_unit,
+        unitPrice=unit_price,
+        subtotal=subtotal,
+        taxAmount=tax_amount,
         amount=amount,
+        currency=currency,
+        paymentStatus=payment_status,
+        paymentReference=payment_reference,
+        dueDate=due_date,
+        arithmeticConsistent=arithmetic_consistent,
+        missingFields=missing_fields,
+        originalFilename=filename,
+        fileHash=hashlib.sha256(file_bytes).hexdigest(),
         confidence=confidence,
         ocrStatus=ocr_status,
         rawText=raw_text.strip() if raw_text else None,
@@ -452,6 +706,20 @@ def process_receipt_ocr(db: Session, receipt: Receipt) -> ReceiptOCRResult:
         filename=receipt.original_filename,
         mime_type=receipt.mime_type,
     )
+    ocr_result.duplicateInvoice = check_duplicate_invoice(
+        db, ocr_result, exclude_receipt_id=receipt.id
+    )
+    if ocr_result.duplicateInvoice:
+        ocr_result.warnings.append(
+            "Invoice number and vendor match a previously submitted invoice; review for a duplicate claim."
+        )
+    ocr_result.duplicateFile = check_duplicate_file(
+        db, ocr_result, exclude_receipt_id=receipt.id
+    )
+    if ocr_result.duplicateFile:
+        ocr_result.warnings.append(
+            "The uploaded file fingerprint matches an existing receipt or expense claim."
+        )
 
     # Update database record
     receipt.extracted_vendor = ocr_result.vendor
@@ -461,8 +729,22 @@ def process_receipt_ocr(db: Session, receipt: Receipt) -> ReceiptOCRResult:
     receipt.ocr_confidence = ocr_result.confidence
     receipt.ocr_status = ocr_result.ocrStatus
     receipt.raw_text = ocr_result.rawText
+    receipt.extracted_vendor_address = ocr_result.vendorAddress
+    receipt.extracted_gstin = ocr_result.gstin
+    receipt.extracted_description = ocr_result.description
+    receipt.extracted_quantity = ocr_result.quantity
+    receipt.extracted_quantity_unit = ocr_result.quantityUnit
+    receipt.extracted_unit_price = ocr_result.unitPrice
+    receipt.extracted_subtotal = ocr_result.subtotal
+    receipt.extracted_tax_amount = ocr_result.taxAmount
+    receipt.extracted_currency = ocr_result.currency
+    receipt.extracted_payment_status = ocr_result.paymentStatus
+    receipt.extracted_payment_reference = ocr_result.paymentReference
+    receipt.extracted_due_date = ocr_result.dueDate
+    receipt.arithmetic_consistent = ocr_result.arithmeticConsistent
+    receipt.duplicate_invoice = ocr_result.duplicateInvoice
+    receipt.duplicate_file = ocr_result.duplicateFile
 
     db.commit()
     db.refresh(receipt)
     return ocr_result
-

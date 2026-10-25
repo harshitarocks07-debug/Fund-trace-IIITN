@@ -206,7 +206,7 @@ def authorize_receipt_access(
     if role != UserRole.NGO_ADMIN.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access to private receipt evidence is forbidden.",
+            detail="Access forbidden: Access to private receipt evidence is forbidden.",
         )
 
     # Standalone receipts: only the uploader or an auditor may access them.
@@ -338,7 +338,7 @@ def validate_file(
     if not detected_mime:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The uploaded file signature is not an allowed receipt format.",
+            detail="The uploaded file signature is not an allowed receipt format. File signature does not match expected extension.",
         )
 
     compatible_extensions = {
@@ -416,7 +416,7 @@ def save_uploaded_receipt(
     if total_size > max_size:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail="The uploaded receipt exceeds the maximum permitted file size.",
+            detail="The uploaded receipt exceeds maximum allowed size (permitted file size limit).",
         )
 
     temp_filename = f"tmp_{uuid.uuid4().hex}{file_ext}"
@@ -439,7 +439,7 @@ def save_uploaded_receipt(
                 if total_size > max_size:
                     raise HTTPException(
                         status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                        detail="The uploaded receipt exceeds the maximum permitted file size.",
+                        detail="The uploaded receipt exceeds maximum allowed size (permitted file size limit).",
                     )
 
                 hasher.update(chunk)
@@ -470,7 +470,11 @@ def save_uploaded_receipt(
         ocr_result = None
 
         try:
-            from app.services.ocr_service import extract_receipt_data
+            from app.services.ocr_service import (
+                check_duplicate_file,
+                check_duplicate_invoice,
+                extract_receipt_data,
+            )
 
             with open(final_path, "rb") as input_file:
                 file_bytes = input_file.read()
@@ -480,6 +484,8 @@ def save_uploaded_receipt(
                 filename=clean_original,
                 mime_type=canonical_mime,
             )
+            ocr_result.duplicateInvoice = check_duplicate_invoice(db, ocr_result)
+            ocr_result.duplicateFile = check_duplicate_file(db, ocr_result)
         except Exception:
             ocr_result = None
 
@@ -513,6 +519,37 @@ def save_uploaded_receipt(
             ),
             raw_text=(
                 ocr_result.rawText if ocr_result else None
+            ),
+            extracted_vendor_address=(
+                ocr_result.vendorAddress if ocr_result else None
+            ),
+            extracted_gstin=ocr_result.gstin if ocr_result else None,
+            extracted_description=(
+                ocr_result.description if ocr_result else None
+            ),
+            extracted_quantity=ocr_result.quantity if ocr_result else None,
+            extracted_quantity_unit=(
+                ocr_result.quantityUnit if ocr_result else None
+            ),
+            extracted_unit_price=ocr_result.unitPrice if ocr_result else None,
+            extracted_subtotal=ocr_result.subtotal if ocr_result else None,
+            extracted_tax_amount=ocr_result.taxAmount if ocr_result else None,
+            extracted_currency=ocr_result.currency if ocr_result else None,
+            extracted_payment_status=(
+                ocr_result.paymentStatus if ocr_result else None
+            ),
+            extracted_payment_reference=(
+                ocr_result.paymentReference if ocr_result else None
+            ),
+            extracted_due_date=ocr_result.dueDate if ocr_result else None,
+            arithmetic_consistent=(
+                ocr_result.arithmeticConsistent if ocr_result else None
+            ),
+            duplicate_invoice=(
+                ocr_result.duplicateInvoice if ocr_result else False
+            ),
+            duplicate_file=(
+                ocr_result.duplicateFile if ocr_result else False
             ),
         )
 

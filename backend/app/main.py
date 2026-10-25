@@ -1,5 +1,15 @@
+import sys
+import asyncio
 import json
 from contextlib import asynccontextmanager
+
+# On Windows, prevent proactor pipe connection lost [WinError 10054] crashes
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -13,6 +23,7 @@ from app.models.project import Project
 from app.models.donation import Donation
 from app.models.expense import Expense
 from app.models.receipt import Receipt
+from app.models.fiat_settlement import FiatSettlement
 from app.models.audit_log import AuditLog
 from app.models.flow import FinancialFlow, FlowHop
 from app.core.security import hash_password
@@ -37,6 +48,21 @@ def ensure_schema_columns():
                 ("ocr_confidence", "FLOAT"),
                 ("ocr_status", "VARCHAR(50)"),
                 ("raw_text", "TEXT"),
+                ("extracted_vendor_address", "VARCHAR(512)"),
+                ("extracted_gstin", "VARCHAR(15)"),
+                ("extracted_description", "TEXT"),
+                ("extracted_quantity", "FLOAT"),
+                ("extracted_quantity_unit", "VARCHAR(50)"),
+                ("extracted_unit_price", "FLOAT"),
+                ("extracted_subtotal", "FLOAT"),
+                ("extracted_tax_amount", "FLOAT"),
+                ("extracted_currency", "VARCHAR(3)"),
+                ("extracted_payment_status", "VARCHAR(30)"),
+                ("extracted_payment_reference", "VARCHAR(120)"),
+                ("extracted_due_date", "VARCHAR(50)"),
+                ("arithmetic_consistent", "BOOLEAN"),
+                ("duplicate_invoice", "BOOLEAN NOT NULL DEFAULT 0"),
+                ("duplicate_file", "BOOLEAN NOT NULL DEFAULT 0"),
             ]
             for col_name, col_type in cols_to_add_receipt:
                 if col_name not in existing_receipt_cols:
@@ -407,7 +433,6 @@ def root():
         "docs_url": "/docs",
         "api_v1": settings.API_V1_STR,
     }
-
 
 @app.get("/health", tags=["Health"])
 def health_check():

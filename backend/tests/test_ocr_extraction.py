@@ -25,6 +25,8 @@ from app.models.expense import Expense
 from app.models.receipt import Receipt
 from app.schemas.expense import ExpenseCreate
 from app.services.ocr_service import (
+    check_duplicate_file,
+    check_duplicate_invoice,
     extract_pdf_streams_text,
     extract_vendor,
     extract_invoice_number,
@@ -109,7 +111,8 @@ def create_sample_pdf_receipt(
     vendor: str = "ABC Building Supplies",
     invoice_no: str = "INV-2026-101",
     date_str: str = "18/10/2026",
-    amount_str: str = "2,00,000.00"
+    amount_str: str = "2,00,000.00",
+    extra_text: str = "",
 ) -> bytes:
     """Helper to generate a valid PDF containing text streams in FlateDecode format."""
     text_content = f"""
@@ -125,6 +128,8 @@ BT
 (Date: {date_str}) Tj
 0 -20 Td
 (Item: Cement Bags and Structural Steel) Tj
+0 -20 Td
+{extra_text}
 0 -20 Td
 (Subtotal: INR {amount_str}) Tj
 0 -20 Td
@@ -253,6 +258,85 @@ def test_extract_receipt_data_complete():
     assert result.confidence == 1.0
     assert result.ocrStatus == "COMPLETED"
 
+def test_extract_invoice_details_and_arithmetic():
+    pdf_bytes = create_sample_pdf_receipt(
+        vendor="ABC Construction Supplies",
+        invoice_no="INV-2026-1042",
+        date_str="20/10/2026",
+        amount_str="41,300.00",
+        extra_text=(
+            "(Vendor Address: Ahmedabad, Gujarat) Tj\n"
+            "(GSTIN: 24ABCDE1234F1Z5) Tj\n"
+            "(Description of Goods/Services: Cement) Tj\n"
+            "(Quantity: 100 bags) Tj\n"
+            "(Unit Price: INR 350.00) Tj\n"
+            "(Subtotal: INR 35,000.00) Tj\n"
+            "(CGST: INR 3,150.00) Tj\n"
+            "(SGST: INR 3,150.00) Tj\n"
+            "(Currency: INR) Tj\n"
+            "(Payment Status: Partially Paid) Tj\n"
+            "(UPI Reference: UTR-ABC-123) Tj\n"
+            "(Due Date: 30/10/2026) Tj"
+        ),
+    )
+
+    result = extract_receipt_data(pdf_bytes, "invoice.pdf", "application/pdf")
+
+    assert result.vendorAddress == "Ahmedabad, Gujarat"
+    assert result.gstin == "24ABCDE1234F1Z5"
+    assert result.description == "Cement"
+    assert result.quantity == 100
+    assert result.quantityUnit == "bags"
+    assert result.unitPrice == 350
+    assert result.subtotal == 35000
+    assert result.taxAmount == 6300
+    assert result.amount == 41300
+    assert result.currency == "INR"
+    assert result.paymentStatus == "Partially Paid"
+    assert result.paymentReference == "UTR-ABC-123"
+    assert result.dueDate == "2026-10-30"
+    assert result.arithmeticConsistent is True
+    assert result.originalFilename == "invoice.pdf"
+    assert len(result.fileHash or "") == 64
+    assert "vendor address" not in result.missingFields
+    assert "GSTIN" not in result.missingFields
+
+def test_extract_inconsistent_invoice_totals_warns():
+    pdf_bytes = create_sample_pdf_receipt(
+        amount_str="42,000.00",
+        extra_text=(
+            "(Subtotal: INR 35,000.00) Tj\n"
+            "(GST Amount: INR 6,300.00) Tj"
+        ),
+    )
+
+    result = extract_receipt_data(pdf_bytes, "invoice.pdf", "application/pdf")
+
+    assert result.arithmeticConsistent is False
+    assert any("does not match" in warning for warning in result.warnings)
+
+def test_duplicate_invoice_and_file_checks(db_session):
+    pdf_bytes = create_sample_pdf_receipt()
+    result = extract_receipt_data(pdf_bytes, "invoice.pdf", "application/pdf")
+    assert not check_duplicate_invoice(db_session, result)
+    assert not check_duplicate_file(db_session, result)
+
+    db_session.add(Receipt(
+        id="RCP-001",
+        original_filename="invoice.pdf",
+        sanitized_filename="invoice.pdf",
+        storage_path="unused",
+        file_size=len(pdf_bytes),
+        mime_type="application/pdf",
+        sha256_hash=result.fileHash,
+        extracted_vendor=result.vendor,
+        extracted_invoice_number=result.invoiceNumber,
+    ))
+    db_session.commit()
+
+    assert check_duplicate_invoice(db_session, result)
+    assert check_duplicate_file(db_session, result)
+
 def test_extract_png_metadata_receipt():
     png_bytes = create_sample_png_receipt(
         vendor="Shree Cement Depot",
@@ -269,7 +353,7 @@ def test_extract_png_metadata_receipt():
 
 # ================= Integration Tests for Endpoints =================
 
-def test_direct_ocr_extract_endpoint(admin_user):
+def test_direct_ocr_extract_endpoint(db_session, admin_user):
     pdf_bytes = create_sample_pdf_receipt(
         vendor="Apex Medical Corp",
         invoice_no="INV-2026-550",
@@ -282,7 +366,7 @@ def test_direct_ocr_extract_endpoint(admin_user):
         headers={"content-type": "application/pdf"}
     )
 
-    result = ocr_extract_file(file=upload_file, current_user=admin_user)
+    result = ocr_extract_file(file=upload_file, db=db_session, current_user=admin_user)
     assert result.vendor == "Apex Medical Corp"
     assert result.invoiceNumber == "INV-2026-550"
     assert result.date == "2026-10-15"
@@ -389,4 +473,3 @@ def test_expense_submission_with_ocr_crosscheck_risk_scoring(db_session, admin_u
     assert any("Claimed amount differs" in r for r in exp2.riskReasons)
     assert any("Claimed vendor" in r for r in exp2.riskReasons)
     assert any("Claimed invoice number" in r for r in exp2.riskReasons)
-
