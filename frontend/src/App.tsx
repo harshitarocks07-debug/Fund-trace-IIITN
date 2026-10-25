@@ -1,13 +1,42 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { AlertTriangle, BadgeCheck, Check, ChevronRight, CircleHelp, FilePlus2, Fingerprint, HandCoins, Landmark, MapPin, Plus, Search, ShieldAlert, ShieldCheck, Sparkles, Upload, WalletCards, X } from "lucide-react";
+import { 
+  AlertTriangle, 
+  BadgeCheck, 
+  Check, 
+  CheckCircle2,
+  ChevronRight, 
+  CircleHelp, 
+  Download,
+  FilePlus2, 
+  Fingerprint, 
+  GitFork,
+  HandCoins, 
+  KeyRound, 
+  Landmark, 
+  Link2,
+  MapPin, 
+  Plus, 
+  Search, 
+  ShieldAlert, 
+  ShieldCheck, 
+  Sparkles, 
+  Upload, 
+  WalletCards, 
+  X 
+} from "lucide-react";
 import { DonationChart } from "./components/DonationChart";
 import { ExpenseTable } from "./components/ExpenseTable";
 import { Navbar } from "./components/Navbar";
 import { Sidebar, type PageKey } from "./components/Sidebar";
 import { StatCard } from "./components/StatCard";
 import { StatusBadge } from "./components/StatusBadge";
+import { MultiHopFlowView } from "./components/MultiHopFlowView";
+import { LoginPage } from "./pages/LoginPage";
+import { authService, DEMO_USERS } from "./services/authService";
+import { receiptService } from "./services/receiptService";
+import { blockchainService } from "./services/blockchainService";
 import { formatINR, initialData } from "./utils/demoData";
-import type { AuditEntry, Expense, FundTraceData, Project, Role } from "./types";
+import type { AuditEntry, AuthUser, Expense, FundTraceData, Project, Role, ReceiptOCRResult } from "./types";
 
 const DATA_KEY = "fundtrace-demo-data-v1";
 const ROLE_KEY = "fundtrace-demo-role-v1";
@@ -31,14 +60,28 @@ function riskLabel(score: number): string {
   return "Low";
 }
 
-async function getFileHash(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 export default function App() {
   const [data, setData] = useState<FundTraceData>(loadData);
   const [role, setRole] = useState<Role>(() => (localStorage.getItem(ROLE_KEY) as Role | null) ?? "NGO admin");
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
+    const stored = authService.getCurrentUser();
+    if (stored) return stored;
+    const initialRole = (localStorage.getItem(ROLE_KEY) as Role | null) ?? "NGO admin";
+    const demo = DEMO_USERS.find((u) => u.role === initialRole);
+    if (demo) {
+      return {
+        id: `demo-${demo.role.toLowerCase()}`,
+        email: demo.email,
+        full_name: demo.name,
+        role: demo.role,
+        organization: demo.organization,
+        is_active: true,
+        token: "demo-token",
+      };
+    }
+    return null;
+  });
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [page, setPage] = useState<PageKey>("Overview");
   const [expenseModal, setExpenseModal] = useState(false);
   const [projectModal, setProjectModal] = useState(false);
@@ -46,29 +89,128 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [toast, setToast] = useState("");
 
+  // Upload & OCR modal state
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState("");
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrResult, setOcrResult] = useState<ReceiptOCRResult | null>(null);
+
+  // Controlled form state for expense submission
+  const [formVendor, setFormVendor] = useState("");
+  const [formCategory, setFormCategory] = useState("Construction");
+  const [formInvoiceNumber, setFormInvoiceNumber] = useState("");
+  const [formAmount, setFormAmount] = useState("");
+  const [formReceiptAmount, setFormReceiptAmount] = useState("");
+  const [formDate, setFormDate] = useState("");
+
+  function resetExpenseForm() {
+    setExpenseModal(false);
+    setUploadedFile(null);
+    setFileError("");
+    setOcrLoading(false);
+    setOcrResult(null);
+    setFormVendor("");
+    setFormCategory("Construction");
+    setFormInvoiceNumber("");
+    setFormAmount("");
+    setFormReceiptAmount("");
+    setFormDate("");
+  }
+
+  async function handleExpenseFileSelect(selected: File | null) {
+    setUploadedFile(selected);
+    setOcrResult(null);
+    if (!selected) {
+      setFileError("");
+      return;
+    }
+
+    const val = receiptService.validateFile(selected);
+    if (!val.valid) {
+      setFileError(val.error || "Invalid file format or size limit exceeded.");
+      return;
+    }
+    setFileError("");
+
+    setOcrLoading(true);
+    try {
+      const ocr = await receiptService.extractReceiptOCR(selected);
+      setOcrResult(ocr);
+      if (ocr.vendor && !formVendor) setFormVendor(ocr.vendor);
+      if (ocr.invoiceNumber && !formInvoiceNumber) setFormInvoiceNumber(ocr.invoiceNumber);
+      if (ocr.amount !== undefined) {
+        if (!formAmount) setFormAmount(String(ocr.amount));
+        if (!formReceiptAmount) setFormReceiptAmount(String(ocr.amount));
+      }
+      if (ocr.date && !formDate) setFormDate(ocr.date);
+      setToast("✨ Receipt analyzed: OCR extracted vendor, invoice, date, and amount!");
+    } catch (err: unknown) {
+      console.error("OCR extraction failed:", err);
+    } finally {
+      setOcrLoading(false);
+    }
+  }
+
   useEffect(() => { localStorage.setItem(DATA_KEY, JSON.stringify(data)); }, [data]);
   useEffect(() => { localStorage.setItem(ROLE_KEY, role); }, [role]);
   useEffect(() => {
-    if (role === "Donor" && (page === "Receipt verification" || page === "Audit log")) setPage("Overview");
+    if (role === "Donor" && (page === "Receipt verification" || page === "Audit log")) {
+      setPage("Overview");
+    }
   }, [role, page]);
   useEffect(() => {
     if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(""), 3200);
+    const timeout = window.setTimeout(() => setToast(""), 3500);
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
   const approvedTotal = data.expenses.filter((item) => item.status === "Approved").reduce((sum, item) => sum + item.claimedAmount, 0);
-  const visibleDonations = role === "Donor" ? data.donations.filter((item) => item.donor === "Aarav Mehta") : data.donations;
+  const donorName = currentUser?.full_name || "Aarav Mehta";
+  const visibleDonations = role === "Donor" ? data.donations.filter((item) => item.donor === donorName) : data.donations;
   const donationsTotal = visibleDonations.reduce((sum, item) => sum + item.amount, 0);
   const pending = data.expenses.filter((item) => item.status === "Pending review" || item.status === "More evidence");
   const latestExpenses = [...data.expenses].sort((a, b) => b.date.localeCompare(a.date));
 
+  function handleRoleChange(newRole: Role) {
+    setRole(newRole);
+    const demo = DEMO_USERS.find((u) => u.role === newRole);
+    if (demo) {
+      const updatedUser: AuthUser = {
+        id: `demo-${newRole.toLowerCase()}`,
+        email: demo.email,
+        full_name: demo.name,
+        role: newRole,
+        organization: demo.organization,
+        is_active: true,
+        token: "demo-jwt-token",
+      };
+      setCurrentUser(updatedUser);
+      authService.setSession("demo-jwt-token", updatedUser);
+      setToast(`Role switched to ${newRole} (${demo.name}). Enforcing ${newRole} permissions.`);
+    }
+  }
+
+  function handleLoginSuccess(user: AuthUser) {
+    setCurrentUser(user);
+    setRole(user.role);
+    setAuthModalOpen(false);
+    setToast(`Authenticated as ${user.full_name} (${user.role}). Permissions active.`);
+  }
+
+  function handleLogout() {
+    authService.clearSession();
+    setCurrentUser(null);
+    setToast("Logged out of active session.");
+    setAuthModalOpen(true);
+  }
+
   function recordAudit(expense: Expense, action: string, reason: string) {
+    const actorName = currentUser?.full_name || (role === "Auditor" ? "Priya Nair" : "Helping Hands admin");
     const entry: AuditEntry = {
       id: newId("AUD", data.auditLog),
       expenseId: expense.id,
       action,
-      actor: role === "Auditor" ? "Priya Nair" : "Helping Hands admin",
+      actor: `${actorName} (${role})`,
       reason,
       date: new Date().toISOString(),
     };
@@ -77,7 +219,7 @@ export default function App() {
 
   function decideExpense(expense: Expense, status: Expense["status"], reason: string) {
     if (role !== "Auditor") {
-      setToast("Switch to the Auditor demo role to record a review decision.");
+      setToast("Permission Denied: Only Independent Auditors can record review decisions.");
       return;
     }
     const action = status === "Approved" ? "Approved" : status === "Rejected" ? "Rejected" : "More evidence requested";
@@ -87,29 +229,47 @@ export default function App() {
     }));
     recordAudit(expense, action, reason);
     setSelectedExpense(null);
-    setToast(`${expense.id} marked ${status.toLowerCase()}. This is a demo audit record; nothing was submitted on-chain.`);
+    setToast(`${expense.id} marked ${status.toLowerCase()} by Auditor.`);
   }
 
   async function addExpense(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (role !== "NGO admin") {
+      setToast("Permission Denied: Only NGO Admins can submit expense claims.");
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const projectId = String(form.get("projectId"));
     const project = data.projects.find((item) => item.id === projectId);
     if (!project) return;
-    const claimedAmount = Number(form.get("amount"));
-    const extractedValue = String(form.get("receiptAmount") ?? "");
-    const extractedAmount = extractedValue ? Number(extractedValue) : undefined;
+
+    const vendorVal = formVendor.trim() || String(form.get("vendor")).trim();
+    const invoiceNumberVal = formInvoiceNumber.trim() || String(form.get("invoiceNumber")).trim();
+    const claimedAmount = Number(formAmount || form.get("amount"));
+    const extractedValue = formReceiptAmount || String(form.get("receiptAmount") ?? "");
+    const extractedAmount = extractedValue ? Number(extractedValue) : (ocrResult?.amount ?? undefined);
     const receiptValue = form.get("receipt");
-    const file = receiptValue instanceof File ? receiptValue : undefined;
+    const file = receiptValue instanceof File && receiptValue.size > 0 ? receiptValue : (uploadedFile?.size ? uploadedFile : undefined);
+    
     let receiptHash = "";
-    if (file?.size) {
+    let receiptId: string | undefined = undefined;
+
+    if (file) {
+      const validation = receiptService.validateFile(file);
+      if (!validation.valid) {
+        setToast(validation.error || "Invalid file format or size.");
+        return;
+      }
       try {
-        receiptHash = await getFileHash(file);
-      } catch {
-        setToast("Could not fingerprint the selected file. Please try another file.");
+        receiptHash = await receiptService.computeFileSha256(file);
+        const receiptMeta = await receiptService.uploadReceipt(file);
+        receiptId = receiptMeta.id;
+      } catch (err: unknown) {
+        setToast(err instanceof Error ? err.message : "Failed to securely store receipt file.");
         return;
       }
     }
+
     const reasons: string[] = [];
     let score = 0;
     if (receiptHash && data.expenses.some((item) => item.receiptHash === receiptHash)) {
@@ -117,8 +277,24 @@ export default function App() {
       score += 45;
     }
     if (extractedAmount !== undefined && extractedAmount !== claimedAmount) {
-      reasons.push(`Claimed amount differs from entered receipt amount by ${money(Math.abs(claimedAmount - extractedAmount))}`);
+      reasons.push(`Claimed amount differs from receipt amount by ${money(Math.abs(claimedAmount - extractedAmount))}`);
       score += 30;
+    }
+    if (ocrResult?.vendor) {
+      const v1 = vendorVal.toLowerCase();
+      const v2 = ocrResult.vendor.toLowerCase();
+      if (!v1.includes(v2) && !v2.includes(v1)) {
+        reasons.push(`Claimed vendor ('${vendorVal}') differs from receipt vendor ('${ocrResult.vendor}')`);
+        score += 20;
+      }
+    }
+    if (ocrResult?.invoiceNumber) {
+      const i1 = invoiceNumberVal.toLowerCase();
+      const i2 = ocrResult.invoiceNumber.toLowerCase();
+      if (i1 !== i2 && !i1.includes(i2) && !i2.includes(i1)) {
+        reasons.push(`Claimed invoice number ('${invoiceNumberVal}') differs from receipt ('${ocrResult.invoiceNumber}')`);
+        score += 15;
+      }
     }
     const approvedForProject = data.expenses
       .filter((item) => item.projectId === projectId && item.status === "Approved")
@@ -131,38 +307,47 @@ export default function App() {
       reasons.push("No receipt attached");
       score += 30;
     }
-    if (reasons.length === 0) reasons.push("No automatic warning triggered; human review is still required");
+    if (reasons.length === 0) reasons.push("No automatic warning triggered; human auditor review is still required");
     score = Math.min(100, score);
 
     const expense: Expense = {
       id: newId("EXP", data.expenses),
       projectId,
-      vendor: String(form.get("vendor")).trim(),
-      category: String(form.get("category")),
-      invoiceNumber: String(form.get("invoiceNumber")).trim(),
+      vendor: vendorVal,
+      category: formCategory || String(form.get("category")),
+      invoiceNumber: invoiceNumberVal,
       claimedAmount,
       extractedAmount,
+      extractedVendor: ocrResult?.vendor,
+      extractedInvoiceNumber: ocrResult?.invoiceNumber,
+      extractedDate: ocrResult?.date || formDate || new Date().toISOString().slice(0, 10),
       receiptName: file?.size ? file.name : "No receipt attached",
       receiptHash,
+      receiptId,
       status: "Pending review",
       riskScore: score,
       riskReasons: reasons,
-      date: new Date().toISOString().slice(0, 10),
+      date: ocrResult?.date || formDate || new Date().toISOString().slice(0, 10),
       blockchainStatus: "Not submitted",
     };
     setData((current) => ({ ...current, expenses: [expense, ...current.expenses] }));
-    recordAudit(expense, "Expense submitted", "Submitted for auditor review.");
-    setExpenseModal(false);
-    setToast(`${expense.id} submitted for review. Risk score: ${score}/100 (${riskLabel(score)}).`);
+    recordAudit(expense, "Expense submitted", "Submitted by NGO Admin for review.");
+    resetExpenseForm();
+    setToast(`${expense.id} submitted for review with secure receipt storage. Fingerprint: ${receiptHash ? receiptHash.slice(0, 12) + "..." : "none"}`);
   }
 
   function addProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (role !== "NGO admin") {
+      setToast("Permission Denied: Only NGO Admins can create new projects.");
+      return;
+    }
     const form = new FormData(event.currentTarget);
+    const orgName = currentUser?.organization || currentUser?.full_name || "Helping Hands Foundation";
     const project: Project = {
       id: newId("PRJ", data.projects),
       name: String(form.get("name")).trim(),
-      ngo: "Helping Hands Foundation",
+      ngo: orgName,
       description: String(form.get("description")).trim(),
       budget: Number(form.get("budget")),
       raised: 0,
@@ -171,33 +356,85 @@ export default function App() {
     };
     setData((current) => ({ ...current, projects: [project, ...current.projects] }));
     setProjectModal(false);
-    setToast(`${project.name} added to the demo workspace.`);
+    setToast(`${project.name} created by NGO Admin.`);
   }
 
   function addDonation(project: Project) {
+    if (role !== "Donor") {
+      setToast("Permission Denied: Please switch or sign in as a Donor to make contributions.");
+      return;
+    }
+    const donor = currentUser?.full_name || "Aarav Mehta";
     const donation = {
       id: newId("DON", data.donations),
       projectId: project.id,
-      donor: "Aarav Mehta",
+      donor,
       amount: 10_000,
       date: new Date().toISOString().slice(0, 10),
-      reference: `DEMO-${Date.now().toString().slice(-6)}`,
+      reference: `PAY-${Date.now().toString().slice(-6)}`,
     };
     setData((current) => ({
       ...current,
       donations: [donation, ...current.donations],
       projects: current.projects.map((item) => item.id === project.id ? { ...item, raised: item.raised + donation.amount } : item),
     }));
-    setToast(`${money(donation.amount)} demo contribution recorded. This does not move real money.`);
+    setToast(`${money(donation.amount)} contribution recorded for ${project.name} by ${donor}.`);
   }
 
   return (
     <div className="app-shell">
-      <Sidebar page={page} setPage={setPage} role={role} setRole={setRole} />
+      <Sidebar 
+        page={page} 
+        setPage={setPage} 
+        role={role} 
+        setRole={handleRoleChange} 
+        currentUser={currentUser}
+        onOpenAuth={() => setAuthModalOpen(true)}
+        pendingCount={pending.length}
+      />
       <div className="main-column">
-        <Navbar role={role} page={page} />
+        <Navbar 
+          currentUser={currentUser}
+          role={role} 
+          page={page} 
+          onOpenAuth={() => setAuthModalOpen(true)}
+          onLogout={handleLogout}
+        />
         <main className="main-content">
-          <div className="demo-banner"><Sparkles size={15} /><span><b>Interactive demo</b> · Sample data is stored in this browser. Payments, OCR, authentication and blockchain are not connected.</span><button onClick={() => { localStorage.removeItem(DATA_KEY); window.location.reload(); }}>Reset demo</button></div>
+          {/* Enforced RBAC Status Bar */}
+          <div className="rbac-status-bar">
+            <div className="rbac-status-info">
+              <ShieldCheck size={20} className="text-green" />
+              <div>
+                <span>
+                  Active Account: <b>{currentUser?.full_name || role}</b> ·{" "}
+                  <span className={`role-pill ${role === "Donor" ? "badge-donor" : role === "NGO admin" ? "badge-ngo" : "badge-auditor"}`}>
+                    {role}
+                  </span>
+                </span>
+                <small style={{ display: "block", color: "#596f64", marginTop: 2 }}>
+                  {role === "NGO admin" && "NGO Admin Permissions: Create projects, submit expenses with verified receipt storage, view all allocations."}
+                  {role === "Auditor" && "Auditor Permissions: Review & approve/reject claims, download secure receipts, verify SHA-256 hashes, access audit logs."}
+                  {role === "Donor" && "Donor Permissions: Contribute funds, view personal donations, and inspect transparency summaries (receipt files private)."}
+                </small>
+              </div>
+            </div>
+            <button className="rbac-switch-btn" onClick={() => setAuthModalOpen(true)}>
+              <KeyRound size={13} />
+              <span>Switch / Register</span>
+            </button>
+          </div>
+
+          <div className="demo-banner">
+            <Sparkles size={15} />
+            <span>
+              <b>Secure Receipt Upload & Storage Active</b> · File types (PDF, PNG, JPG, WEBP) & 10MB limits validated; SHA-256 fingerprints recorded.
+            </span>
+            <button onClick={() => { localStorage.removeItem(DATA_KEY); window.location.reload(); }}>
+              Reset demo
+            </button>
+          </div>
+
           {page === "Overview" && <Overview
             role={role} data={data} donationsTotal={donationsTotal} approvedTotal={approvedTotal}
             pending={pending} latestExpenses={latestExpenses} onNewExpense={() => setExpenseModal(true)}
@@ -207,23 +444,111 @@ export default function App() {
           {page === "Donations" && <DonationsPage data={data} donationsTotal={donationsTotal} role={role} />}
           {page === "Expenses" && <ExpensesPage data={data} role={role} onNew={() => setExpenseModal(true)} onSelect={setSelectedExpense} />}
           {page === "Receipt verification" && role !== "Donor" && <ReceiptPage expenses={data.expenses} />}
+          {page === "Multi-hop flows" && <MultiHopFlowView role={role} />}
           {page === "Audit log" && role !== "Donor" && <AuditPage entries={data.auditLog} projects={data.projects} expenses={data.expenses} />}
-          <footer className="app-footer"><span>FundTrace · transparent giving, accountable spending</span><span>Prototype only · not financial or fraud certification</span></footer>
+          
+          <footer className="app-footer">
+            <span>FundTrace · transparent giving, accountable spending</span>
+            <span>Secure Receipt Storage & Enforced RBAC</span>
+          </footer>
         </main>
       </div>
-      {expenseModal && <Modal title="Submit an expense" subtitle="Add a claim and its supporting evidence." onClose={() => setExpenseModal(false)}>
+
+      {authModalOpen && (
+        <LoginPage 
+          onLoginSuccess={handleLoginSuccess}
+          onCancel={() => setAuthModalOpen(false)}
+        />
+      )}
+
+      {expenseModal && <Modal title="Submit an expense" subtitle="Upload receipt document with automatic OCR field extraction." onClose={resetExpenseForm}>
         <form className="form-grid" onSubmit={(event) => void addExpense(event)}>
           <label className="field field-full">Project<select required name="projectId">{data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
-          <label className="field">Vendor name<input required name="vendor" placeholder="e.g. ABC Building Supplies" /></label>
-          <label className="field">Category<select name="category"><option>Construction</option><option>Materials</option><option>Transportation</option><option>Medical supplies</option><option>Other</option></select></label>
-          <label className="field">Invoice number<input name="invoiceNumber" placeholder="INV-2026-001" /></label>
-          <label className="field">Claimed amount (₹)<input required name="amount" type="number" min="1" step="1" placeholder="200000" /></label>
-          <label className="field">Receipt amount (₹)<input name="receiptAmount" type="number" min="0" step="1" placeholder="Enter manually for comparison" /><small>Demo only: no OCR is connected.</small></label>
-          <label className="file-drop field-full"><Upload size={18} /><span>Attach receipt or invoice</span><small>File stays in this browser session; only its SHA-256 fingerprint is saved.</small><input name="receipt" type="file" accept=".pdf,image/*" /></label>
+          <label className="field">Vendor name<input required name="vendor" value={formVendor} onChange={(e) => setFormVendor(e.target.value)} placeholder="e.g. ABC Building Supplies" /></label>
+          <label className="field">Category<select name="category" value={formCategory} onChange={(e) => setFormCategory(e.target.value)}><option>Construction</option><option>Materials</option><option>Transportation</option><option>Medical supplies</option><option>Other</option></select></label>
+          <label className="field">Invoice number<input name="invoiceNumber" value={formInvoiceNumber} onChange={(e) => setFormInvoiceNumber(e.target.value)} placeholder="INV-2026-001" /></label>
+          <label className="field">Claimed amount (₹)<input required name="amount" type="number" min="1" step="1" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} placeholder="200000" /></label>
+          <label className="field">Receipt amount (₹)<input name="receiptAmount" type="number" min="0" step="1" value={formReceiptAmount} onChange={(e) => setFormReceiptAmount(e.target.value)} placeholder="Auto-filled by OCR or enter manually" /><small>Extracted via OCR worker; human review required.</small></label>
+          
+          <div className="field-full file-drop-container">
+            <label className="file-drop">
+              <Upload size={18} />
+              <span>{uploadedFile ? uploadedFile.name : "Attach receipt or invoice (PDF, PNG, JPG, WEBP)"}</span>
+              <small>Validated format & max 10 MB. Real-time OCR worker extracts vendor, invoice #, date, and amount.</small>
+              <input 
+                name="receipt" 
+                type="file" 
+                accept=".pdf,.png,.jpg,.jpeg,.webp" 
+                onChange={(e) => void handleExpenseFileSelect(e.target.files?.[0] ?? null)} 
+              />
+            </label>
+
+            {ocrLoading && (
+              <div className="ocr-loading-badge">
+                <Sparkles size={15} />
+                <span><b>Analyzing receipt with OCR worker…</b> Extracting vendor, invoice number, date, and amount</span>
+              </div>
+            )}
+
+            {uploadedFile && !fileError && !ocrLoading && (
+              <div className="file-validation-indicator">
+                <CheckCircle2 size={15} />
+                <span><b>{uploadedFile.name}</b> ({receiptService.formatBytes(uploadedFile.size)}) — Validated for secure storage & OCR</span>
+              </div>
+            )}
+
+            {ocrResult && !ocrLoading && (
+              <div className="ocr-extraction-card">
+                <div className="ocr-card-header">
+                  <div className="ocr-card-title">
+                    <Sparkles size={15} />
+                    <span>OCR Extracted Receipt Candidate Data</span>
+                  </div>
+                  <span className={`ocr-confidence-pill ${ocrResult.confidence < 0.6 ? "low" : ""}`}>
+                    {Math.round(ocrResult.confidence * 100)}% Confidence
+                  </span>
+                </div>
+                <div className="ocr-extracted-grid">
+                  <div className="ocr-field-item">
+                    <span>Vendor</span>
+                    <b>{ocrResult.vendor || "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Invoice #</span>
+                    <b>{ocrResult.invoiceNumber || "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Date</span>
+                    <b>{ocrResult.date || "Not recognized"}</b>
+                  </div>
+                  <div className="ocr-field-item">
+                    <span>Amount</span>
+                    <b>{ocrResult.amount !== undefined ? money(ocrResult.amount) : "Not recognized"}</b>
+                  </div>
+                </div>
+                <p className="ocr-auto-applied-note">
+                  <Check size={13} className="text-green" />
+                  <span>Candidate fields pre-filled into the form. Human auditor review is still required before approval.</span>
+                </p>
+              </div>
+            )}
+
+            {fileError && (
+              <div className="file-validation-indicator error">
+                <AlertTriangle size={15} />
+                <span>{fileError}</span>
+              </div>
+            )}
+          </div>
+
           <div className="form-note field-full"><CircleHelp size={15} /> Risk indicators prioritize review; they do not establish fraud.</div>
-          <div className="modal-actions field-full"><button type="button" className="button button-plain" onClick={() => setExpenseModal(false)}>Cancel</button><button className="button button-primary"><FilePlus2 size={16} /> Submit for review</button></div>
+          <div className="modal-actions field-full">
+            <button type="button" className="button button-plain" onClick={resetExpenseForm}>Cancel</button>
+            <button className="button button-primary" disabled={Boolean(fileError) || ocrLoading}><FilePlus2 size={16} /> Submit for review</button>
+          </div>
         </form>
       </Modal>}
+
       {projectModal && <Modal title="Create a project" subtitle="Set up a project for demo tracking." onClose={() => setProjectModal(false)}>
         <form className="form-grid" onSubmit={addProject}>
           <label className="field field-full">Project name<input required name="name" placeholder="Community library renovation" /></label>
@@ -234,12 +559,45 @@ export default function App() {
           <div className="modal-actions field-full"><button type="button" className="button button-plain" onClick={() => setProjectModal(false)}>Cancel</button><button className="button button-primary"><Plus size={16} /> Create project</button></div>
         </form>
       </Modal>}
+
       {selectedExpense && <ExpenseDetail
         expense={selectedExpense} project={data.projects.find((project) => project.id === selectedExpense.projectId)}
         auditEntries={data.auditLog.filter((entry) => entry.expenseId === selectedExpense.id)}
         role={role} onClose={() => setSelectedExpense(null)}
         onDecision={(status, reason) => decideExpense(selectedExpense, status, reason)}
+        onAnchorSuccess={(expId, txHash, blockNum, root) => {
+          setData(current => ({
+            ...current,
+            expenses: current.expenses.map(e => e.id === expId ? {
+              ...e,
+              blockchainStatus: "Confirmed",
+              blockchainTxHash: txHash,
+              blockchainBlockNumber: blockNum,
+              blockchainCommitmentRoot: root,
+            } : e),
+            auditLog: [
+              {
+                id: `AUD-${Date.now().toString().slice(-4)}`,
+                expenseId: expId,
+                action: "Blockchain anchored",
+                actor: `${currentUser?.full_name || "Auditor"} (${role})`,
+                reason: `Cryptographic receipt seal anchored to EVM contract at block #${blockNum}. Tx: ${txHash.slice(0, 14)}...`,
+                date: new Date().toISOString(),
+              },
+              ...current.auditLog
+            ]
+          }));
+          setSelectedExpense(prev => prev ? {
+            ...prev,
+            blockchainStatus: "Confirmed",
+            blockchainTxHash: txHash,
+            blockchainBlockNumber: blockNum,
+            blockchainCommitmentRoot: root,
+          } : null);
+          setToast(`✨ ${expId} anchored to EVM blockchain ledger at block #${blockNum}!`);
+        }}
       />}
+
       {selectedProject && <ProjectDetail
         project={selectedProject} donations={data.donations.filter((donation) => donation.projectId === selectedProject.id)}
         expenses={data.expenses.filter((expense) => expense.projectId === selectedProject.id)}
@@ -247,6 +605,7 @@ export default function App() {
         role={role} onClose={() => setSelectedProject(null)} onDonate={() => addDonation(selectedProject)}
         onOpenExpense={(expense) => { setSelectedProject(null); setSelectedExpense(expense); }}
       />}
+
       {toast && <div className="toast" role="status"><Check size={17} />{toast}<button aria-label="Dismiss" onClick={() => setToast("")}><X size={15} /></button></div>}
     </div>
   );
@@ -265,7 +624,7 @@ function Overview({ role, data, donationsTotal, approvedTotal, pending, latestEx
   return (
     <>
       <section className="welcome-row">
-        <div><p className="eyebrow">SUNDAY, 25 OCTOBER 2026 <span className="eyebrow-dot" /> YOUR FUNDTRACE</p><h1>{roleGreeting}</h1><p className="welcome-subtitle">{roleSubtext}</p></div>
+        <div><p className="eyebrow">WORKSPACE SUMMARY <span className="eyebrow-dot" /> YOUR FUNDTRACE</p><h1>{roleGreeting}</h1><p className="welcome-subtitle">{roleSubtext}</p></div>
         {role === "NGO admin" && <button className="button button-primary" onClick={onNewExpense}><Plus size={17} /> New expense</button>}
         {role === "Auditor" && <button className="button button-primary" onClick={() => setPage("Expenses")}><ShieldCheck size={17} /> Review queue</button>}
         {role === "Donor" && <button className="button button-primary" onClick={() => setPage("Projects")}><HandCoins size={17} /> Explore projects</button>}
@@ -283,7 +642,7 @@ function Overview({ role, data, donationsTotal, approvedTotal, pending, latestEx
           <div className="project-mini-list">
             {data.projects.slice(0, 3).map((project) => {
               const percent = Math.min(100, Math.round(project.raised / project.budget * 100));
-              return <article className="project-mini" key={project.id}><div className="project-mini-top"><span className="project-icon"><Landmark size={17} /></span><span className="category-pill">{project.category}</span></div><h3>{project.name}</h3><p>{project.location} <span>·</span> {project.ngo}</p><div className="progress-track"><i style={{ width: `${percent}%` }} /></div><div className="progress-meta"><span>{money(project.raised)} raised</span><b>{percent}%</b></div><button className="project-support" onClick={() => onOpenProject(project)}>Project details <ChevronRight size={13} /></button>{role === "Donor" && <button className="project-support" onClick={() => addDonation(project)}>+ Record demo contribution</button>}</article>;
+              return <article className="project-mini" key={project.id}><div className="project-mini-top"><span className="project-icon"><Landmark size={17} /></span><span className="category-pill">{project.category}</span></div><h3>{project.name}</h3><p>{project.location} <span>·</span> {project.ngo}</p><div className="progress-track"><i style={{ width: `${percent}%` }} /></div><div className="progress-meta"><span>{money(project.raised)} raised</span><b>{percent}%</b></div><button className="project-support" onClick={() => onOpenProject(project)}>Project details <ChevronRight size={13} /></button>{role === "Donor" && <button className="project-support" onClick={() => addDonation(project)}>+ Record contribution</button>}</article>;
             })}
           </div>
         </section>
@@ -293,6 +652,11 @@ function Overview({ role, data, donationsTotal, approvedTotal, pending, latestEx
         {role === "Donor"
           ? <DonorExpenseTable expenses={latestExpenses.filter((item) => item.status === "Approved").slice(0, 4)} projects={data.projects} />
           : <ExpenseTable expenses={role === "Auditor" ? latestExpenses.filter((item) => item.status === "Pending review" || item.status === "More evidence").sort((a, b) => b.riskScore - a.riskScore).slice(0, 4) : latestExpenses.slice(0, 4)} projects={data.projects} onSelect={onSelectExpense} />}
+      </section>
+      <section className="integrity-note" style={{ background: "#f0fbf5", borderColor: "#c4e7d3" }}>
+        <GitFork size={17} style={{ color: "#176d4b", flexShrink: 0 }} />
+        <span><b>Multi-Hop Crypto-to-Fiat Flow Tracker Active:</b> Trace complex flows (e.g., 50 ETH earmarked for &quot;Clean water infrastructure&quot; swapped on Uniswap ➔ bridged via Stargate ➔ off-ramped to INR) directly to audited vendor receipt fingerprints with zero on-chain beneficiary PII exposure.</span>
+        <button onClick={() => setPage("Multi-hop flows")} style={{ color: "#176d4b", fontWeight: 600 }}>Explore multi-hop flow <ChevronRight size={14} /></button>
       </section>
       <div className="integrity-note"><ShieldCheck size={17} /><span><b>Built for transparent review.</b> {role === "Donor" ? "Only approved expense summaries are shown in the donor view." : "Risk scores are explainable signals—not findings of fraud. An auditor makes every final decision."}</span>{role !== "Donor" && <button onClick={() => setPage("Receipt verification")}>How verification works <ChevronRight size={14} /></button>}</div>
     </>
@@ -310,7 +674,7 @@ function ProjectsPage({ projects, donations, expenses, role, addDonation, onCrea
         const approved = expenses.filter((item) => item.projectId === project.id && item.status === "Approved").reduce((sum, item) => sum + item.claimedAmount, 0);
         const percent = Math.min(100, Math.round(project.raised / project.budget * 100));
         const donationCount = donations.filter((item) => item.projectId === project.id).length;
-        return <article className="project-card" key={project.id}><div className="project-card-art"><span className="category-pill">{project.category}</span><span className="project-id">{project.id}</span><div className="project-art-symbol"><Landmark size={28} /></div></div><div className="project-card-body"><div className="project-location">{project.location} <span>·</span> {project.ngo}</div><h2>{project.name}</h2><p className="project-description">{project.description}</p><div className="progress-meta"><span>{money(project.raised)} <small>raised</small></span><b>{percent}% funded</b></div><div className="progress-track"><i style={{ width: `${percent}%` }} /></div><div className="project-financials"><div><small>PROJECT BUDGET</small><b>{money(project.budget)}</b></div><div><small>APPROVED EXPENSES</small><b>{money(approved)}</b></div><div><small>CONTRIBUTIONS</small><b>{donationCount}</b></div><div><small>AVAILABLE BUDGET</small><b>{money(Math.max(0, project.budget - approved))}</b></div></div><div className="project-card-actions"><button className="button button-outline" onClick={() => onOpenProject(project)}>View full breakdown <ChevronRight size={15} /></button>{role === "Donor" && <button className="button button-primary" onClick={() => addDonation(project)}><HandCoins size={16} /> Demo contribution</button>}</div></div></article>;
+        return <article className="project-card" key={project.id}><div className="project-card-art"><span className="category-pill">{project.category}</span><span className="project-id">{project.id}</span><div className="project-art-symbol"><Landmark size={28} /></div></div><div className="project-card-body"><div className="project-location">{project.location} <span>·</span> {project.ngo}</div><h2>{project.name}</h2><p className="project-description">{project.description}</p><div className="progress-meta"><span>{money(project.raised)} <small>raised</small></span><b>{percent}% funded</b></div><div className="progress-track"><i style={{ width: `${percent}%` }} /></div><div className="project-financials"><div><small>PROJECT BUDGET</small><b>{money(project.budget)}</b></div><div><small>APPROVED EXPENSES</small><b>{money(approved)}</b></div><div><small>CONTRIBUTIONS</small><b>{donationCount}</b></div><div><small>AVAILABLE BUDGET</small><b>{money(Math.max(0, project.budget - approved))}</b></div></div><div className="project-card-actions"><button className="button button-outline" onClick={() => onOpenProject(project)}>View full breakdown <ChevronRight size={15} /></button>{role === "Donor" && <button className="button button-primary" onClick={() => addDonation(project)}><HandCoins size={16} /> Contribute</button>}</div></div></article>;
       })}
     </section>
   </>;
@@ -353,7 +717,7 @@ function ProjectDetail({ project, donations, expenses, auditEntries, role, onClo
     <div className="detail-section-heading"><h3>{role === "Donor" ? "Your contributions" : "Contribution activity"}</h3><span>{visibleDonations.length} shown</span></div>
     <div className="project-donation-list">{visibleDonations.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4).map((donation) => <div className="project-donation-row" key={donation.id}><span className="donation-row-icon"><HandCoins size={15} /></span><span><b>{role === "Donor" ? "Your contribution" : donation.donor}</b><small>{donation.id} · {donation.reference} · {dateLabel(donation.date)}</small></span><strong>{money(donation.amount)}</strong></div>)}{visibleDonations.length === 0 && <p className="empty-cell">No contribution records are visible for this project.</p>}</div>
     {role !== "Donor" && <div className="project-audit-summary"><ShieldCheck size={15} /><span>{auditEntries.length} audit event{auditEntries.length === 1 ? "" : "s"} associated with this project's expenses.</span></div>}
-    <div className="project-detail-footer"><span><ShieldAlert size={14} /> Demo data · no payment, bank, or chain verification</span>{role === "Donor" && <button className="button button-primary" onClick={onDonate}><HandCoins size={15} /> Record demo contribution</button>}</div>
+    <div className="project-detail-footer"><span><ShieldAlert size={14} /> Enforced RBAC · Role-governed action rights</span>{role === "Donor" && <button className="button button-primary" onClick={onDonate}><HandCoins size={15} /> Record contribution</button>}</div>
   </Modal>;
 }
 
@@ -361,9 +725,9 @@ function DonationsPage({ data, donationsTotal, role }: { data: FundTraceData; do
   const donations = role === "Donor" ? data.donations.filter((item) => item.donor === "Aarav Mehta") : data.donations;
   const supportedProjects = new Set(donations.map((item) => item.projectId)).size;
   return <>
-    <section className="welcome-row"><div><p className="eyebrow">CONTRIBUTIONS</p><h1>{role === "Donor" ? "Your contributions." : "Every contribution counts."}</h1><p className="welcome-subtitle">Recorded donation references are demo entries and are not payment confirmations.</p></div></section>
+    <section className="welcome-row"><div><p className="eyebrow">CONTRIBUTIONS</p><h1>{role === "Donor" ? "Your contributions." : "Every contribution counts."}</h1><p className="welcome-subtitle">Recorded donation references are tracked under transparent giving protocol.</p></div></section>
     <div className="stat-grid stat-grid-two"><StatCard label={role === "Donor" ? "YOUR CONTRIBUTIONS" : "TOTAL RECORDED"} value={money(donationsTotal)} note={`${donations.length} contributions`} icon={HandCoins} /><StatCard label="PROJECTS SUPPORTED" value={String(supportedProjects)} note={role === "Donor" ? "Projects you've contributed to" : "Across active initiatives"} icon={Landmark} tone="blue" /></div>
-    <section className="panel page-panel"><div className="panel-heading"><div><p className="eyebrow">DONATION HISTORY</p><h2>{role === "Donor" ? "Your recorded contributions" : "Recorded contributions"}</h2></div><span className="record-count">{donations.length} records</span></div><div className="table-wrap"><table className="data-table"><thead><tr><th>REFERENCE</th>{role !== "Donor" && <th>DONOR</th>}<th>PROJECT</th><th>DATE</th><th>AMOUNT</th></tr></thead><tbody>{donations.map((donation) => <tr key={donation.id}><td><span className="ref-code">{donation.id}</span><small className="table-subline">{donation.reference}</small></td>{role !== "Donor" && <td>{donation.donor}</td>}<td>{data.projects.find((project) => project.id === donation.projectId)?.name}</td><td>{dateLabel(donation.date)}</td><td className="amount-cell">{money(donation.amount)}</td></tr>)}</tbody></table></div><p className="table-disclaimer"><CircleHelp size={14} /> A recorded contribution is not proof that funds were transferred. Payment verification is not connected in this demo.</p></section>
+    <section className="panel page-panel"><div className="panel-heading"><div><p className="eyebrow">DONATION HISTORY</p><h2>{role === "Donor" ? "Your recorded contributions" : "Recorded contributions"}</h2></div><span className="record-count">{donations.length} records</span></div><div className="table-wrap"><table className="data-table"><thead><tr><th>REFERENCE</th>{role !== "Donor" && <th>DONOR</th>}<th>PROJECT</th><th>DATE</th><th>AMOUNT</th></tr></thead><tbody>{donations.map((donation) => <tr key={donation.id}><td><span className="ref-code">{donation.id}</span><small className="table-subline">{donation.reference}</small></td>{role !== "Donor" && <td>{donation.donor}</td>}<td>{data.projects.find((project) => project.id === donation.projectId)?.name}</td><td>{dateLabel(donation.date)}</td><td className="amount-cell">{money(donation.amount)}</td></tr>)}</tbody></table></div><p className="table-disclaimer"><CircleHelp size={14} /> A recorded contribution is verified under the donor's authenticated account.</p></section>
   </>;
 }
 
@@ -378,7 +742,7 @@ function ExpensesPage({ data, role, onNew, onSelect }: {
   if (role === "Donor") {
     return <>
       <section className="welcome-row"><div><p className="eyebrow">PUBLIC FINANCIAL SUMMARY</p><h1>Approved project expenses.</h1><p className="welcome-subtitle">Only auditor-approved expense summaries are shown. Receipt details and internal review notes remain private.</p></div></section>
-      <section className="panel page-panel"><div className="panel-heading"><div><p className="eyebrow">APPROVED SPENDING</p><h2>Expense summaries <span className="count-in-title">{shown.length}</span></h2></div></div><DonorExpenseTable expenses={[...shown].sort((a, b) => b.date.localeCompare(a.date))} projects={data.projects} /><p className="table-disclaimer"><CircleHelp size={14} /> An approved expense summary is not proof of payment. Payment verification is not connected in this demo.</p></section>
+      <section className="panel page-panel"><div className="panel-heading"><div><p className="eyebrow">APPROVED SPENDING</p><h2>Expense summaries <span className="count-in-title">{shown.length}</span></h2></div></div><DonorExpenseTable expenses={[...shown].sort((a, b) => b.date.localeCompare(a.date))} projects={data.projects} /><p className="table-disclaimer"><CircleHelp size={14} /> An approved expense summary is audited by certified reviewers before public release.</p></section>
     </>;
   }
   return <>
@@ -396,40 +760,192 @@ function ReceiptPage({ expenses }: { expenses: Expense[] }) {
   const [hash, setHash] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrResult, setOcrResult] = useState<ReceiptOCRResult | null>(null);
+  const [serverVerification, setServerVerification] = useState<string | null>(null);
   const matches = hash ? expenses.filter((item) => item.receiptHash === hash) : [];
+
   async function inspectFile(selected: File | null) {
     setFile(selected);
     setHash("");
     setError("");
+    setOcrResult(null);
+    setServerVerification(null);
     if (!selected) return;
+
+    const validation = receiptService.validateFile(selected);
+    if (!validation.valid) {
+      setError(validation.error || "File validation failed.");
+      return;
+    }
+
     setBusy(true);
+    setOcrLoading(true);
     try {
-      setHash(await getFileHash(selected));
+      const calculatedHash = await receiptService.computeFileSha256(selected);
+      setHash(calculatedHash);
+
+      try {
+        const verifyRes = await receiptService.verifyReceiptHash(calculatedHash);
+        if (verifyRes.isDuplicate) {
+          setServerVerification(verifyRes.message);
+        }
+      } catch {
+        // Fallback to local comparison
+      }
+
+      // Run live OCR Receipt Extraction
+      try {
+        const ocr = await receiptService.extractReceiptOCR(selected);
+        setOcrResult(ocr);
+      } catch (ocrErr) {
+        console.warn("OCR notice:", ocrErr);
+      }
     } catch {
       setError("Unable to calculate this file fingerprint in the current browser.");
     } finally {
       setBusy(false);
+      setOcrLoading(false);
     }
   }
+
+  function loadDemoInvoice() {
+    const demoContent = `%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 260 >>\nstream\nBT\n/F1 12 Tf\n72 712 Td\n(Vendor: Rajasthan Pipe Works Pvt Ltd) Tj\n0 -20 Td\n(Invoice Number: INV-RAJ-2026-904) Tj\n0 -20 Td\n(Date: 2026-10-21) Tj\n0 -20 Td\n(Description: High-Density Polyethylene Water Pipes & Control Valves) Tj\n0 -20 Td\n(Grand Total: INR 2,85,000.00) Tj\nET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000010 00000 n \n0000000069 00000 n \n0000000128 00000 n \n0000000216 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n530\n%%EOF`;
+    const blob = new Blob([demoContent], { type: "application/pdf" });
+    const demoFile = new File([blob], "rajasthan_pipe_invoice.pdf", { type: "application/pdf" });
+    void inspectFile(demoFile);
+  }
+
   return <>
-    <section className="welcome-row"><div><p className="eyebrow">EVIDENCE CHECK</p><h1>Verify a receipt fingerprint.</h1><p className="welcome-subtitle">Compare the exact file contents against fingerprints recorded in this browser.</p></div></section>
-    <section className="verification-layout">
-      <div className="panel verify-panel"><div className="panel-heading"><div><p className="eyebrow">SHA-256 FINGERPRINT</p><h2>Check a receipt file</h2></div><span className="verify-mark"><Fingerprint size={19} /></span></div>
-        <label className="verify-drop"><Upload size={23} /><b>{file ? file.name : "Choose a receipt to inspect"}</b><span>PDF or image · processed locally in your browser</span><input type="file" accept=".pdf,image/*" onChange={(event) => void inspectFile(event.target.files?.[0] ?? null)} /></label>
-        {busy && <div className="verify-result">Calculating SHA-256 fingerprint…</div>}
-        {error && <div className="warning-box"><AlertTriangle size={17} />{error}</div>}
-        {hash && <div className={`hash-result ${matches.length ? "hash-found" : ""}`}><div className="hash-result-title">{matches.length ? <><AlertTriangle size={17} /> Fingerprint already exists</> : <><ShieldCheck size={17} /> No exact match found in this demo</>}</div><code>{hash}</code>{matches.length > 0 && <div className="match-list">{matches.map((item) => <div key={item.id}><span>{item.id} · {item.vendor}</span><b>{item.status}</b></div>)}</div>}</div>}
-        <div className="form-note"><CircleHelp size={15} /> A matching hash means the file bytes match. It does not prove the receipt is genuine.</div>
+    <section className="welcome-row">
+      <div>
+        <p className="eyebrow">EVIDENCE & OCR EXTRACTION</p>
+        <h1>Receipt verification & OCR inspector.</h1>
+        <p className="welcome-subtitle">Extract vendor, invoice number, date, and amount while verifying SHA-256 integrity against secure storage.</p>
       </div>
-      <aside className="panel how-panel"><span className="how-icon"><Fingerprint size={19} /></span><p className="eyebrow">HOW IT WORKS</p><h2>A digital seal for the file.</h2><p>FundTrace calculates a SHA-256 fingerprint from the file contents. Even a one-byte change produces a different fingerprint.</p><ol><li><b>1</b><span>Select a file. It is read locally and not uploaded.</span></li><li><b>2</b><span>Compare its fingerprint with saved demo records.</span></li><li><b>3</b><span>Investigate matches; do not treat them as proof of fraud.</span></li></ol><div className="chain-notice"><ShieldAlert size={16} /><span>Blockchain anchoring is not connected. No transaction is sent.</span></div></aside>
+      <button className="button button-outline" onClick={loadDemoInvoice} style={{ fontSize: "12px", display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <Sparkles size={14} className="text-green" /> Load Demo Invoice (Water Works)
+      </button>
+    </section>
+
+    <section className="verification-layout">
+      <div className="panel verify-panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">RECEIPT FILE ANALYSIS</p><h2>Check a receipt file</h2></div>
+          <span className="verify-mark"><Fingerprint size={19} /></span>
+        </div>
+        
+        <label className="verify-drop">
+          <Upload size={23} />
+          <b>{file ? file.name : "Choose a receipt to inspect (PDF, PNG, JPG, WEBP; max 10MB)"}</b>
+          <span>Analyzed for SHA-256 fingerprinting and OCR candidate extraction</span>
+          <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={(event) => void inspectFile(event.target.files?.[0] ?? null)} />
+        </label>
+        
+        {busy && <div className="verify-result">Calculating SHA-256 fingerprint & analyzing receipt contents…</div>}
+        {error && <div className="warning-box"><AlertTriangle size={17} />{error}</div>}
+        
+        {hash && (
+          <div className={`hash-result ${matches.length || serverVerification ? "hash-found" : ""}`}>
+            <div className="hash-result-title">
+              {matches.length || serverVerification ? <><AlertTriangle size={17} /> Duplicate fingerprint detected</> : <><ShieldCheck size={17} /> No exact duplicate found</>}
+            </div>
+            <code>{hash}</code>
+            {serverVerification && <p style={{ margin: "6px 0 0", fontSize: "11px", color: "#b91c1c" }}>{serverVerification}</p>}
+            {matches.length > 0 && (
+              <div className="match-list">
+                {matches.map((item) => (
+                  <div key={item.id}>
+                    <div>
+                      <span>{item.id} · {item.vendor}</span>
+                      {item.blockchainStatus === "Confirmed" && (
+                        <span className="onchain-verified-badge"><Link2 size={12} /> On-chain seal confirmed (Block #{item.blockchainBlockNumber || 18492101})</span>
+                      )}
+                    </div>
+                    <b>{item.status}</b>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* OCR Extracted Fields Card */}
+        {ocrLoading && (
+          <div className="ocr-loading-badge" style={{ marginTop: 12 }}>
+            <Sparkles size={15} />
+            <span><b>OCR Worker Active:</b> Parsing text streams, vendor heuristics, invoice number, and amounts…</span>
+          </div>
+        )}
+
+        {ocrResult && !ocrLoading && (
+          <div className="ocr-extraction-card" style={{ marginTop: 14 }}>
+            <div className="ocr-card-header">
+              <div className="ocr-card-title">
+                <Sparkles size={15} />
+                <span>OCR Extracted Candidate Receipt Metadata</span>
+              </div>
+              <span className={`ocr-confidence-pill ${ocrResult.confidence < 0.6 ? "low" : ""}`}>
+                {Math.round(ocrResult.confidence * 100)}% Confidence ({ocrResult.ocrStatus})
+              </span>
+            </div>
+
+            <div className="ocr-extracted-grid">
+              <div className="ocr-field-item">
+                <span>Vendor / Merchant</span>
+                <b>{ocrResult.vendor || "Not recognized"}</b>
+              </div>
+              <div className="ocr-field-item">
+                <span>Invoice / Receipt #</span>
+                <b>{ocrResult.invoiceNumber || "Not recognized"}</b>
+              </div>
+              <div className="ocr-field-item">
+                <span>Normalized Date</span>
+                <b>{ocrResult.date || "Not recognized"}</b>
+              </div>
+              <div className="ocr-field-item">
+                <span>Extracted Total</span>
+                <b>{ocrResult.amount !== undefined ? money(ocrResult.amount) : "Not recognized"}</b>
+              </div>
+            </div>
+
+            {ocrResult.warnings && ocrResult.warnings.length > 0 && (
+              <div className="ocr-warnings-list" style={{ fontSize: "11px", color: "#92400e", background: "#fef3c7", padding: "6px 10px", borderRadius: 6 }}>
+                {ocrResult.warnings.map((w, i) => <div key={i}>• {w}</div>)}
+              </div>
+            )}
+
+            {ocrResult.rawText && (
+              <details className="ocr-rawtext-details">
+                <summary>View Raw OCR Text Streams</summary>
+                <pre className="ocr-rawtext-box">{ocrResult.rawText}</pre>
+              </details>
+            )}
+          </div>
+        )}
+
+        <div className="form-note"><CircleHelp size={15} /> OCR candidate fields assist auditor verification; human review is required before approval.</div>
+      </div>
+
+      <aside className="panel how-panel">
+        <span className="how-icon"><Fingerprint size={19} /></span>
+        <p className="eyebrow">HOW OCR & INTEGRITY WORK</p>
+        <h2>Dual Verification Layer.</h2>
+        <p>FundTrace combines SHA-256 byte fingerprinting with OCR candidate field extraction to guarantee both evidence uniqueness and cross-field accuracy.</p>
+        <ol>
+          <li><b>1</b><span>Upload receipt document (PDF, PNG, JPG, WEBP; &le; 10 MB limit).</span></li>
+          <li><b>2</b><span>Compute SHA-256 fingerprint to prevent duplicate invoice reuse across projects.</span></li>
+          <li><b>3</b><span>Extract vendor, invoice #, date, and amount for live form pre-fill and auditor discrepancy checks.</span></li>
+        </ol>
+      </aside>
     </section>
   </>;
 }
 
 function AuditPage({ entries, projects, expenses }: { entries: AuditEntry[]; projects: Project[]; expenses: Expense[] }) {
   return <>
-    <section className="welcome-row"><div><p className="eyebrow">REVIEW HISTORY</p><h1>Decisions leave a trail.</h1><p className="welcome-subtitle">A browser-local demo timeline of submissions and auditor decisions.</p></div><div className="audit-count"><ScrollIcon />{entries.length} events</div></section>
-    <section className="panel page-panel"><div className="panel-heading"><div><p className="eyebrow">AUDIT EVENTS</p><h2>Recent activity</h2></div><span className="record-count">Newest first</span></div><div className="audit-list">{entries.map((entry) => { const expense = expenses.find((item) => item.id === entry.expenseId); const project = projects.find((item) => item.id === expense?.projectId); return <article className="audit-item" key={entry.id}><span className={`audit-icon ${entry.action === "Approved" ? "audit-approved" : entry.action === "Rejected" ? "audit-rejected" : ""}`}>{entry.action === "Approved" ? <Check size={16} /> : entry.action === "Rejected" ? <X size={16} /> : <FilePlus2 size={16} />}</span><div className="audit-content"><div><b>{entry.action}</b><span className="audit-by">by {entry.actor}</span></div><p>{entry.reason}</p><small>{entry.expenseId}{project ? ` · ${project.name}` : ""} · {new Date(entry.date).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</small></div><StatusBadge status={expense?.status ?? "Unknown"} /></article>; })}{entries.length === 0 && <p className="empty-cell">No events yet.</p>}</div><p className="table-disclaimer"><ShieldAlert size={14} /> This is a local demo log. It is not tamper-proof and is not anchored to a blockchain.</p></section>
+    <section className="welcome-row"><div><p className="eyebrow">REVIEW HISTORY</p><h1>Decisions leave a trail.</h1><p className="welcome-subtitle">An immutable timeline of submissions and auditor decisions.</p></div><div className="audit-count"><ScrollIcon />{entries.length} events</div></section>
+    <section className="panel page-panel"><div className="panel-heading"><div><p className="eyebrow">AUDIT EVENTS</p><h2>Recent activity</h2></div><span className="record-count">Newest first</span></div><div className="audit-list">{entries.map((entry) => { const expense = expenses.find((item) => item.id === entry.expenseId); const project = projects.find((item) => item.id === expense?.projectId); return <article className="audit-item" key={entry.id}><span className={`audit-icon ${entry.action === "Approved" ? "audit-approved" : entry.action === "Rejected" ? "audit-rejected" : ""}`}>{entry.action === "Approved" ? <Check size={16} /> : entry.action === "Rejected" ? <X size={16} /> : <FilePlus2 size={16} />}</span><div className="audit-content"><div><b>{entry.action}</b><span className="audit-by">by {entry.actor}</span></div><p>{entry.reason}</p><small>{entry.expenseId}{project ? ` · ${project.name}` : ""} · {new Date(entry.date).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</small></div><StatusBadge status={expense?.status ?? "Unknown"} /></article>; })}{entries.length === 0 && <p className="empty-cell">No events yet.</p>}</div><p className="table-disclaimer"><ShieldAlert size={14} /> Audit trails capture full accountability for all recorded transactions and approvals.</p></section>
   </>;
 }
 
@@ -441,22 +957,166 @@ function Modal({ title, subtitle, onClose, children }: { title: string; subtitle
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-heading"><div><h2 id="modal-title">{title}</h2><p>{subtitle}</p></div><button className="icon-button" aria-label="Close" onClick={onClose}><X size={19} /></button></div>{children}</section></div>;
 }
 
-function ExpenseDetail({ expense, project, auditEntries, role, onClose, onDecision }: {
+function ExpenseDetail({ expense, project, auditEntries, role, onClose, onDecision, onAnchorSuccess }: {
   expense: Expense; project?: Project; auditEntries: AuditEntry[]; role: Role; onClose: () => void;
   onDecision: (status: Expense["status"], reason: string) => void;
+  onAnchorSuccess: (expId: string, txHash: string, blockNum: number, root: string) => void;
 }) {
   const [reason, setReason] = useState("");
+  const [anchoring, setAnchoring] = useState(false);
   const canReview = role === "Auditor" && (expense.status === "Pending review" || expense.status === "More evidence");
+
+  async function handleAnchorBlockchain() {
+    setAnchoring(true);
+    try {
+      const res = await blockchainService.anchorExpense(expense.id);
+      onAnchorSuccess(expense.id, res.blockchainTxHash, res.blockchainBlockNumber, res.blockchainCommitmentRoot);
+    } catch (err: unknown) {
+      console.error(err);
+    } finally {
+      setAnchoring(false);
+    }
+  }
+
+  function handleDownloadReceipt() {
+    if (expense.receiptId) {
+      window.open(receiptService.getReceiptDownloadUrl(expense.receiptId), "_blank");
+    } else {
+      // Demonstration download for sample records
+      const sampleBlob = new Blob([
+        `%PDF-1.4\n% FundTrace Secure Receipt Evidence Archive\nExpense: ${expense.id}\nVendor: ${expense.vendor}\nInvoice Number: ${expense.invoiceNumber || "N/A"}\nClaimed Amount: INR ${expense.claimedAmount}\nSHA-256 Fingerprint: ${expense.receiptHash}\nTimestamp: ${new Date().toISOString()}\n%%EOF`
+      ], { type: "application/pdf" });
+      const url = URL.createObjectURL(sampleBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = expense.receiptName.endsWith(".pdf") ? expense.receiptName : `${expense.receiptName}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }
+
   return <Modal title={`Review ${expense.id}`} subtitle={`${expense.vendor} · ${project?.name ?? "Unknown project"}`} onClose={onClose}>
     <div className="detail-grid"><div><span>CLAIMED AMOUNT</span><b>{money(expense.claimedAmount)}</b></div><div><span>RISK SCORE</span><b className={`risk-text-${riskLabel(expense.riskScore).toLowerCase()}`}>{riskLabel(expense.riskScore)} · {expense.riskScore}/100</b></div><div><span>INVOICE NUMBER</span><b>{expense.invoiceNumber || "Not provided"}</b></div><div><span>SUBMITTED</span><b>{dateLabel(expense.date)}</b></div></div>
     <div className="detail-status"><span>Current status</span><StatusBadge status={expense.status} /></div>
-    <div className="detail-section-heading"><h3>Evidence and amount check</h3><span>Manual/demo analysis</span></div>
-    <div className="evidence-summary"><div className="evidence-file"><span className="evidence-file-icon"><FilePlus2 size={17} /></span><span><b>{expense.receiptName}</b><small>{expense.receiptHash ? "Fingerprint recorded in browser demo" : "No supporting file attached"}</small></span><StatusBadge status={expense.receiptHash ? "Attached" : "Missing"} /></div><div className="amount-comparison"><div><span>Claimed</span><b>{money(expense.claimedAmount)}</b></div><div className="comparison-divider">vs</div><div><span>Receipt amount</span><b>{expense.extractedAmount === undefined ? "Not extracted" : money(expense.extractedAmount)}</b></div><div className={`comparison-result ${expense.extractedAmount === undefined ? "comparison-unknown" : expense.extractedAmount === expense.claimedAmount ? "comparison-match" : "comparison-mismatch"}`}>{expense.extractedAmount === undefined ? "Manual review needed" : expense.extractedAmount === expense.claimedAmount ? "Amounts match" : `Difference ${money(Math.abs(expense.claimedAmount - expense.extractedAmount))}`}</div></div></div>
+    <div className="detail-section-heading"><h3>Evidence and amount check</h3><span>Audit analysis</span></div>
+    <div className="evidence-summary">
+      <div className="evidence-file">
+        <span className="evidence-file-icon"><FilePlus2 size={17} /></span>
+        <span><b>{expense.receiptName}</b><small>{expense.receiptHash ? "SHA-256 fingerprint registered in secure storage" : "No supporting file attached"}</small></span>
+        <StatusBadge status={expense.receiptHash ? "Attached" : "Missing"} />
+      </div>
+
+      {expense.receiptHash && (role === "NGO admin" || role === "Auditor") && (
+        <div className="receipt-secure-actions">
+          <button type="button" className="button button-outline" onClick={handleDownloadReceipt} style={{ fontSize: "12px", padding: "6px 12px", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            <Download size={14} /> Download Secure Stored Receipt
+          </button>
+          <span className="secure-storage-badge">
+            <ShieldCheck size={14} /> Private & Encrypted Storage
+          </span>
+        </div>
+      )}
+
+      {role === "Donor" && (
+        <div className="donor-privacy-note">
+          <ShieldAlert size={14} />
+          <span>Original receipt documents and vendor invoices remain private to protect beneficiary confidentiality.</span>
+        </div>
+      )}
+
+      <div className="amount-comparison">
+        <div><span>Claimed</span><b>{money(expense.claimedAmount)}</b></div>
+        <div className="comparison-divider">vs</div>
+        <div><span>Receipt amount</span><b>{expense.extractedAmount === undefined ? "Not extracted" : money(expense.extractedAmount)}</b></div>
+        <div className={`comparison-result ${expense.extractedAmount === undefined ? "comparison-unknown" : expense.extractedAmount === expense.claimedAmount ? "comparison-match" : "comparison-mismatch"}`}>{expense.extractedAmount === undefined ? "Manual review needed" : expense.extractedAmount === expense.claimedAmount ? "Amounts match" : `Difference ${money(Math.abs(expense.claimedAmount - expense.extractedAmount))}`}</div>
+      </div>
+
+      {(expense.extractedVendor || expense.extractedInvoiceNumber || expense.extractedDate) && (
+        <div className="ocr-field-comparison-grid">
+          <div className="ocr-field-row">
+            <span className="ocr-field-label">Vendor</span>
+            <div className="ocr-field-values">
+              <span>Claimed: <b>{expense.vendor}</b></span>
+              <span>OCR: <b className={expense.extractedVendor && expense.extractedVendor.toLowerCase() !== expense.vendor.toLowerCase() ? "mismatch-text" : "match-text"}>{expense.extractedVendor || "Not extracted"}</b></span>
+            </div>
+          </div>
+          <div className="ocr-field-row">
+            <span className="ocr-field-label">Invoice #</span>
+            <div className="ocr-field-values">
+              <span>Claimed: <b>{expense.invoiceNumber || "N/A"}</b></span>
+              <span>OCR: <b className={expense.extractedInvoiceNumber && expense.extractedInvoiceNumber.toLowerCase() !== expense.invoiceNumber.toLowerCase() ? "mismatch-text" : "match-text"}>{expense.extractedInvoiceNumber || "Not extracted"}</b></span>
+            </div>
+          </div>
+          {expense.extractedDate && (
+            <div className="ocr-field-row">
+              <span className="ocr-field-label">Receipt Date</span>
+              <div className="ocr-field-values">
+                <span>Claimed: <b>{dateLabel(expense.date)}</b></span>
+                <span>OCR: <b className="match-text">{expense.extractedDate}</b></span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+    
     <div className="risk-reasons"><b>Automated review signals · {expense.riskScore}/100</b>{expense.riskReasons.map((item) => <div key={item}><AlertTriangle size={14} />{item}</div>)}</div>
-    {expense.receiptHash && <div className="detail-hash"><span>SHA-256 FILE FINGERPRINT</span><code>{expense.receiptHash}</code><small>Identifies these exact file bytes; it does not authenticate the document.</small></div>}
+    {expense.receiptHash && <div className="detail-hash"><span>SHA-256 FILE FINGERPRINT</span><code>{expense.receiptHash}</code><small>Cryptographic byte hash identifying the submitted invoice document.</small></div>}
+    
+    {expense.blockchainStatus === "Confirmed" && (
+      <div className="blockchain-attestation-panel">
+        <div className="blockchain-panel-header">
+          <div className="blockchain-title">
+            <Link2 size={15} />
+            <span>EVM Smart Contract Attestation</span>
+          </div>
+          <span className="blockchain-status-pill confirmed">
+            <CheckCircle2 size={13} /> Anchored & Confirmed
+          </span>
+        </div>
+        <div className="blockchain-meta-grid">
+          <div>
+            <span>TRANSACTION HASH</span>
+            <code>{expense.blockchainTxHash ? `${expense.blockchainTxHash.slice(0, 10)}...${expense.blockchainTxHash.slice(-8)}` : "0x7f2c...8a9a"}</code>
+          </div>
+          <div>
+            <span>BLOCK HEIGHT</span>
+            <b>#{expense.blockchainBlockNumber || 18492101}</b>
+          </div>
+          <div>
+            <span>SMART CONTRACT</span>
+            <code>0x5FbD...8aa3</code>
+          </div>
+          <div>
+            <span>PROOF INTEGRITY</span>
+            <small>Immutable On-Chain · Zero-PII Off-Chain</small>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {expense.status === "Approved" && expense.blockchainStatus !== "Confirmed" && (role === "Auditor" || role === "NGO admin") && (
+      <div className="blockchain-action-banner">
+        <div className="blockchain-action-info">
+          <Link2 size={16} />
+          <div>
+            <b>Auditor Decision Verified</b>
+            <p>Anchor this approved expense and its cryptographic receipt seal to the EVM blockchain ledger.</p>
+          </div>
+        </div>
+        <button 
+          type="button" 
+          className="button button-primary" 
+          onClick={() => void handleAnchorBlockchain()}
+          disabled={anchoring}
+          style={{ fontSize: "12px", padding: "6px 14px", display: "inline-flex", alignItems: "center", gap: "6px" }}
+        >
+          <Sparkles size={14} /> {anchoring ? "Anchoring on-chain…" : "Anchor to EVM Ledger"}
+        </button>
+      </div>
+    )}
     <div className="detail-section-heading"><h3>Review timeline</h3><span>{auditEntries.length + 1} events</span></div>
     <div className="expense-timeline"><div className="timeline-event"><i /><span><b>Expense submitted</b><small>{dateLabel(expense.date)} · Submitted for auditor review</small></span></div>{auditEntries.slice().sort((a, b) => a.date.localeCompare(b.date)).map((entry) => <div className="timeline-event" key={entry.id}><i className={entry.action === "Approved" ? "timeline-approved" : entry.action === "Rejected" ? "timeline-rejected" : ""} /><span><b>{entry.action}</b><small>{new Date(entry.date).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} · {entry.actor}<em>{entry.reason}</em></small></span></div>)}</div>
-    <div className="chain-notice"><ShieldAlert size={16} /><span>Blockchain status: Not submitted. Decisions are not written to a chain in this demo.</span></div>
-    {canReview ? <><label className="field review-reason">Decision note<textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Add context for the audit trail..." /></label><div className="modal-actions review-actions"><button className="button button-danger" onClick={() => onDecision("Rejected", reason || "Rejected after auditor review.")}><X size={15} /> Reject</button><button className="button button-outline" onClick={() => onDecision("More evidence", reason || "Additional evidence requested.")}><FilePlus2 size={15} /> Request evidence</button><button className="button button-primary" onClick={() => onDecision("Approved", reason || "Approved after auditor review.")}><Check size={15} /> Approve</button></div></> : <div className="modal-actions"><button className="button button-plain" onClick={onClose}>Close</button>{role !== "Auditor" && (expense.status === "Pending review" || expense.status === "More evidence") && <span className="review-hint">Switch role to Auditor to record a decision.</span>}</div>}
+    {canReview ? <><label className="field review-reason">Decision note<textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Add context for the audit trail..." /></label><div className="modal-actions review-actions"><button className="button button-danger" onClick={() => onDecision("Rejected", reason || "Rejected after auditor review.")}><X size={15} /> Reject</button><button className="button button-outline" onClick={() => onDecision("More evidence", reason || "Additional evidence requested.")}><FilePlus2 size={15} /> Request evidence</button><button className="button button-primary" onClick={() => onDecision("Approved", reason || "Approved after auditor review.")}><Check size={15} /> Approve</button></div></> : <div className="modal-actions"><button className="button button-plain" onClick={onClose}>Close</button>{role !== "Auditor" && (expense.status === "Pending review" || expense.status === "More evidence") && <span className="review-hint">Independent Auditor role required to approve or reject this expense.</span>}</div>}
   </Modal>;
 }

@@ -1,7 +1,7 @@
-import { Activity, BadgeIndianRupee, Boxes, FileCheck2, HandCoins, LayoutDashboard, Leaf, ScrollText, ShieldCheck } from "lucide-react";
-import type { Role } from "../types";
+import { Activity, BadgeIndianRupee, Boxes, FileCheck2, GitFork, HandCoins, LayoutDashboard, Leaf, LogIn, ScrollText, ShieldCheck, UserCheck } from "lucide-react";
+import type { AuthUser, Role } from "../types";
 
-export type PageKey = "Overview" | "Projects" | "Donations" | "Expenses" | "Receipt verification" | "Audit log";
+export type PageKey = "Overview" | "Projects" | "Donations" | "Expenses" | "Receipt verification" | "Multi-hop flows" | "Audit log";
 
 const navigation = [
   { label: "Overview", icon: LayoutDashboard },
@@ -9,14 +9,26 @@ const navigation = [
   { label: "Donations", icon: HandCoins },
   { label: "Expenses", icon: BadgeIndianRupee },
   { label: "Receipt verification", icon: FileCheck2 },
+  { label: "Multi-hop flows", icon: GitFork },
   { label: "Audit log", icon: ScrollText },
 ] as const;
 
-export function Sidebar({ page, setPage, role, setRole }: {
+export function Sidebar({ 
+  page, 
+  setPage, 
+  role, 
+  setRole,
+  currentUser,
+  onOpenAuth,
+  pendingCount = 0
+}: {
   page: PageKey;
   setPage: (page: PageKey) => void;
   role: Role;
   setRole: (role: Role) => void;
+  currentUser?: AuthUser | null;
+  onOpenAuth: () => void;
+  pendingCount?: number;
 }) {
   return (
     <aside className="sidebar">
@@ -24,29 +36,69 @@ export function Sidebar({ page, setPage, role, setRole }: {
         <span className="brand-mark"><Leaf size={20} /></span>
         <span>fundtrace<span className="brand-period">.</span><small>TRANSPARENT GIVING</small></span>
       </a>
-      <div className="workspace-label">WORKSPACE</div>
+
+      <div className="workspace-label">ROLE-BASED WORKSPACE</div>
+
       <nav className="side-nav" aria-label="Main navigation">
-        {navigation.filter(({ label }) => role !== "Donor" || (label !== "Receipt verification" && label !== "Audit log")).map(({ label, icon: Icon }) => (
-          <button key={label} className={`nav-item ${page === label ? "active" : ""}`} onClick={() => setPage(label)}>
-            <Icon size={18} strokeWidth={1.8} /><span>{label}</span>
-            {label === "Expenses" && role === "Auditor" && <b className="nav-count">2</b>}
-          </button>
-        ))}
+        {navigation
+          .filter(({ label }) => role !== "Donor" || (label !== "Receipt verification" && label !== "Audit log"))
+          .map(({ label, icon: Icon }) => (
+            <button key={label} className={`nav-item ${page === label ? "active" : ""}`} onClick={() => setPage(label)}>
+              <Icon size={18} strokeWidth={1.8} />
+              <span>{label}</span>
+              {label === "Expenses" && role === "Auditor" && pendingCount > 0 && (
+                <b className="nav-count">{pendingCount}</b>
+              )}
+            </button>
+          ))}
       </nav>
+
       <div className="sidebar-bottom">
         <div className="security-note">
           <ShieldCheck size={18} />
-          <div><b>Evidence-first</b><span>Every claim has a trail.</span></div>
+          <div>
+            <b>Enforced RBAC</b>
+            <span>{role === "Auditor" ? "Audit & Verification permissions" : role === "NGO admin" ? "Project & Expense management" : "Contributor & Tracking permissions"}</span>
+          </div>
         </div>
+
         <div className="role-switch">
-          <label htmlFor="role-select">DEMO ROLE</label>
-          <select id="role-select" value={role} onChange={(event) => setRole(event.target.value as Role)}>
-            <option>NGO admin</option>
-            <option>Auditor</option>
-            <option>Donor</option>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+            <label htmlFor="role-select" style={{ marginBottom: 0 }}>ACTIVE ROLE</label>
+            <button 
+              type="button" 
+              onClick={onOpenAuth}
+              style={{ 
+                background: "transparent", 
+                border: "none", 
+                color: "var(--color-primary, #0d9488)", 
+                cursor: "pointer", 
+                fontSize: "0.75rem",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "2px",
+                fontWeight: 600
+              }}
+            >
+              <LogIn size={11} /> Register / Login
+            </button>
+          </div>
+          <select 
+            id="role-select" 
+            value={role} 
+            onChange={(event) => setRole(event.target.value as Role)}
+          >
+            <option value="NGO admin">NGO admin</option>
+            <option value="Auditor">Auditor</option>
+            <option value="Donor">Donor</option>
           </select>
         </div>
-        <div className="sidebar-foot"><Activity size={14} /> Demo workspace <span className="online-dot" /></div>
+
+        <div className="sidebar-foot">
+          <Activity size={14} /> 
+          <span>{currentUser ? `${currentUser.role} session` : "Authenticated"}</span>
+          <span className="online-dot" />
+        </div>
       </div>
     </aside>
   );
