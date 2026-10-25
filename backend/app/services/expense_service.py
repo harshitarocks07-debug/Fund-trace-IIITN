@@ -19,55 +19,139 @@ def submit_expense(
     db: Session,
     expense_in: ExpenseCreate,
     reviewer_name: Optional[str] = None,
+    current_user: Optional[Any] = None,
 ) -> Expense:
     """Submit a new expenditure record, optionally associating it with an active
-
     project initiative.
     """
-    # 1. Validate NGO
-    ngo = db.query(NGO).filter(NGO.id == expense_in.ngo_id, NGO.is_active == True).first()
-    if not ngo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Target NGO with ID {expense_in.ngo_id} not found or inactive.",
-        )
+    import json
 
-    # 2. Validate Project if supplied
+    # 1. Resolve and validate Project if supplied
     project: Optional[Project] = None
-    if expense_in.project_id is not None:
-        project = db.query(Project).filter(Project.id == expense_in.project_id, Project.is_active == True).first()
+    target_project_id = expense_in.projectId or expense_in.project_id
+    if target_project_id is not None:
+        project = db.query(Project).filter(Project.id == str(target_project_id), Project.is_active == True).first()
+        if not project:
+            project = db.query(Project).filter(Project.id == str(target_project_id)).first()
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Target Project with ID {expense_in.project_id} not found or inactive.",
+                detail=f"Target Project with ID {target_project_id} not found or inactive.",
             )
-        if project.ngo_id != ngo.id:
+
+    # 2. Resolve and validate NGO
+    ngo: Optional[NGO] = None
+    if expense_in.ngo_id is not None:
+        ngo = db.query(NGO).filter(NGO.id == expense_in.ngo_id, NGO.is_active == True).first()
+        if not ngo and (project is None or expense_in.ngo_id != 1):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Project '{project.title}' (ID {project.id}) does not belong to NGO '{ngo.name}' (ID {ngo.id}).",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Target NGO with ID {expense_in.ngo_id} not found or inactive.",
             )
 
-    receipt_hash = expense_in.receipt_hash or Expense.generate_receipt_hash()
-    clean_status = expense_in.status.upper().strip()
+    if project and ngo and project.ngo_id is not None and project.ngo_id != ngo.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Project '{project.title or project.name}' (ID {project.id}) does not belong to NGO '{ngo.name}' (ID {ngo.id}).",
+        )
 
-    is_approved = clean_status in ("APPROVED", "REIMBURSED")
+    if not ngo and project and project.ngo_id is not None:
+        ngo = db.query(NGO).filter(NGO.id == project.ngo_id).first()
+
+    # Risk evaluation
+    reasons = []
+    score = 0
+    receipt_h = expense_in.receiptHash or expense_in.receipt_hash
+    claimed_amt = expense_in.claimedAmount or expense_in.claimed_amount or expense_in.amount or 0.0
+
+    if receipt_h and receipt_h != "No receipt attached":
+        duplicate = db.query(Expense).filter(Expense.receipt_hash == receipt_h, Expense.is_active == True).first()
+        if duplicate:
+            reasons.append("Exact receipt file has already been submitted")
+            score += 45
+
+    if expense_in.extractedAmount is not None and expense_in.extractedAmount != claimed_amt:
+        diff = abs(claimed_amt - expense_in.extractedAmount)
+        reasons.append(f"Claimed amount differs from receipt amount by ₹{diff:,.2f}")
+        score += 30
+
+    vnd = expense_in.vendor or expense_in.vendor_name or expense_in.title or ""
+    if expense_in.extractedVendor and vnd:
+        ev_clean = expense_in.extractedVendor.lower()
+        v_clean = vnd.lower()
+        if ev_clean not in v_clean and v_clean not in ev_clean:
+            reasons.append(f"Claimed vendor ('{vnd}') differs from receipt vendor ('{expense_in.extractedVendor}')")
+            score += 20
+
+    inv_num = expense_in.invoiceNumber or expense_in.invoice_number or ""
+    if expense_in.extractedInvoiceNumber and inv_num:
+        ei_clean = expense_in.extractedInvoiceNumber.strip().lower()
+        i_clean = inv_num.strip().lower()
+        if ei_clean != i_clean and ei_clean not in i_clean and i_clean not in ei_clean:
+            reasons.append(f"Claimed invoice number ('{inv_num}') differs from receipt invoice ('{expense_in.extractedInvoiceNumber}')")
+            score += 15
+
+    if project:
+        proj_budget = project.budget or project.target_budget or 0.0
+        approved_for_proj = sum(
+            e.claimed_amount or e.amount or 0.0
+            for e in db.query(Expense).filter(
+                Expense.project_id == str(project.id),
+                Expense.status.in_(["Approved", "APPROVED"]),
+                Expense.is_active == True
+            ).all()
+        )
+        if proj_budget > 0 and approved_for_proj + claimed_amt > proj_budget:
+            reasons.append("Claim exceeds remaining project budget")
+            score += 25
+
+    if not receipt_h or receipt_h == "No receipt attached":
+        reasons.append("No receipt attached")
+        score += 30
+
+    if not reasons:
+        reasons.append("No automatic warning triggered; human review is still required")
+
+    score = min(100, score)
+
+    if not receipt_h or receipt_h == "No receipt attached":
+        receipt_h = Expense.generate_receipt_hash()
+
+    clean_status = expense_in.status.strip() if expense_in.status else "Pending review"
+    is_approved = clean_status in ("APPROVED", "Approved", "REIMBURSED")
     tx_hash = Expense.generate_tx_hash() if is_approved else None
 
+    existing_count = db.query(Expense).count()
+    expense_id = f"EXP-{str(existing_count + 1).zfill(3)}"
+
     expense = Expense(
-        ngo_id=ngo.id,
-        project_id=project.id if project else None,
-        title=expense_in.title.strip(),
+        id=expense_id,
+        ngo_id=ngo.id if ngo else None,
+        project_id=str(project.id) if project else None,
+        submitted_by_id=getattr(current_user, "id", None) if current_user else None,
+        title=expense_in.title.strip() if expense_in.title else vnd,
         description=expense_in.description.strip() if expense_in.description else None,
-        category=expense_in.category,
-        amount=round(float(expense_in.amount), 2),
+        category=expense_in.category or "Operational",
+        amount=round(float(claimed_amt), 2),
+        claimed_amount=round(float(claimed_amt), 2),
         currency=expense_in.currency or "INR",
-        payment_mode=expense_in.payment_mode.upper(),
-        vendor_name=expense_in.vendor_name.strip() if expense_in.vendor_name else None,
-        invoice_number=expense_in.invoice_number.strip() if expense_in.invoice_number else None,
+        payment_mode=expense_in.payment_mode.upper() if expense_in.payment_mode else "BANK_TRANSFER",
+        vendor=vnd,
+        vendor_name=vnd,
+        invoice_number=inv_num,
         invoice_date=expense_in.invoice_date or datetime.utcnow(),
-        receipt_hash=receipt_hash,
+        receipt_name=expense_in.receipt_name or expense_in.receiptName or "receipt.pdf",
+        receipt_hash=receipt_h,
         receipt_url=expense_in.receipt_url,
+        extracted_amount=expense_in.extractedAmount,
+        extracted_vendor=expense_in.extractedVendor,
+        extracted_invoice_number=expense_in.extractedInvoiceNumber,
+        extracted_date=expense_in.extractedDate,
         status=clean_status,
+        risk_score=score,
+        risk_reasons=json.dumps(reasons),
+        date=datetime.now().strftime("%Y-%m-%d"),
+        blockchain_status="Not submitted",
         is_verified=is_approved,
         verified_at=datetime.utcnow() if is_approved else None,
         reviewed_by=reviewer_name if is_approved else None,
@@ -79,17 +163,20 @@ def submit_expense(
 
     # If approved immediately, adjust utilization figures
     if is_approved:
-        ngo.total_funds_utilized = round((ngo.total_funds_utilized or 0.0) + expense.amount, 2)
+        if ngo:
+            ngo.total_funds_utilized = round((ngo.total_funds_utilized or 0.0) + expense.amount, 2)
         if project:
-            project.utilized_amount = round((project.utilized_amount or 0.0) + expense.amount, 2)
+            new_util = round((project.utilized_amount or 0.0) + expense.amount, 2)
+            project.utilized_amount = new_util
+            project.utilized = new_util
 
     db.commit()
     db.refresh(expense)
     return expense
 
 
-def get_expense_by_id(db: Session, expense_id: int) -> Optional[Expense]:
-    return db.query(Expense).filter(Expense.id == expense_id, Expense.is_active == True).first()
+def get_expense_by_id(db: Session, expense_id: Any) -> Optional[Expense]:
+    return db.query(Expense).filter(Expense.id == str(expense_id), Expense.is_active == True).first()
 
 
 def list_expenses(
@@ -197,13 +284,12 @@ def update_expense(
 
 def update_expense_status(
     db: Session,
-    expense_id: int,
-    status_update: ExpenseStatusUpdate,
+    expense_id: Any,
+    status_update: Any,
     reviewer: Optional[str] = None,
 ) -> Expense:
     """Manage lifecycle status of an expense (PENDING -> APPROVED / REJECTED /
-
-    FLAGGED).
+    FLAGGED / More evidence).
 
     Maintains automatic synchronization of NGO total_funds_utilized and Project
     utilized_amount.
@@ -215,15 +301,20 @@ def update_expense_status(
             detail=f"Expense with ID {expense_id} not found.",
         )
 
-    old_status = expense.status.upper()
-    new_status = status_update.status.upper()
+    raw_status = status_update.status if hasattr(status_update, "status") else str(status_update)
+    notes = getattr(status_update, "review_notes", None) or getattr(status_update, "reason", None)
+    rev_by = getattr(status_update, "reviewed_by", None) or reviewer or expense.reviewed_by
+
+    old_status = (expense.status or "").upper()
+    new_status = raw_status.strip()
+    new_status_upper = new_status.upper()
 
     was_approved = old_status in ("APPROVED", "REIMBURSED")
-    is_now_approved = new_status in ("APPROVED", "REIMBURSED")
+    is_now_approved = new_status_upper in ("APPROVED", "REIMBURSED")
 
     expense.status = new_status
-    expense.review_notes = status_update.review_notes
-    expense.reviewed_by = status_update.reviewed_by or reviewer or expense.reviewed_by
+    expense.review_notes = notes
+    expense.reviewed_by = rev_by
 
     if is_now_approved and not was_approved:
         # Transitioning into approved state: credit utilization
@@ -237,9 +328,11 @@ def update_expense_status(
                 (expense.ngo.total_funds_utilized or 0.0) + expense.amount, 2
             )
         if expense.project:
-            expense.project.utilized_amount = round(
+            new_util = round(
                 (expense.project.utilized_amount or 0.0) + expense.amount, 2
             )
+            expense.project.utilized_amount = new_util
+            expense.project.utilized = new_util
 
     elif was_approved and not is_now_approved:
         # Transitioning away from approved state (rejected or flagged): reverse utilization
@@ -249,16 +342,18 @@ def update_expense_status(
                 0.0, round((expense.ngo.total_funds_utilized or 0.0) - expense.amount, 2)
             )
         if expense.project:
-            expense.project.utilized_amount = max(
+            new_util = max(
                 0.0, round((expense.project.utilized_amount or 0.0) - expense.amount, 2)
             )
+            expense.project.utilized_amount = new_util
+            expense.project.utilized = new_util
 
     db.commit()
     db.refresh(expense)
     return expense
 
 
-def delete_expense(db: Session, expense_id: int) -> bool:
+def delete_expense(db: Session, expense_id: Any) -> bool:
     """Soft delete an expense and reverse balances if it was approved."""
     expense = get_expense_by_id(db, expense_id)
     if not expense:
@@ -267,15 +362,17 @@ def delete_expense(db: Session, expense_id: int) -> bool:
             detail=f"Expense with ID {expense_id} not found.",
         )
 
-    if expense.status in ("APPROVED", "REIMBURSED"):
+    if expense.status in ("APPROVED", "Approved", "REIMBURSED"):
         if expense.ngo:
             expense.ngo.total_funds_utilized = max(
                 0.0, round((expense.ngo.total_funds_utilized or 0.0) - expense.amount, 2)
             )
         if expense.project:
-            expense.project.utilized_amount = max(
+            new_util = max(
                 0.0, round((expense.project.utilized_amount or 0.0) - expense.amount, 2)
             )
+            expense.project.utilized_amount = new_util
+            expense.project.utilized = new_util
 
     expense.is_active = False
     db.commit()

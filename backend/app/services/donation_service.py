@@ -16,43 +16,65 @@ from app.schemas.donation import (
 )
 
 
-def record_donation(db: Session, donation_in: DonationCreate) -> Donation:
+def record_donation(db: Session, donation_in: DonationCreate, current_user: Optional[Any] = None) -> Donation:
     """Record a donation, associate with an NGO and optionally a specific project,
-
     and update project raised amounts and NGO funding totals.
     """
-    # 1. Validate NGO
-    ngo = db.query(NGO).filter(NGO.id == donation_in.ngo_id, NGO.is_active == True).first()
-    if not ngo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Target NGO with ID {donation_in.ngo_id} not found or inactive.",
-        )
-
-    # 2. Validate Project if specified
+    # 1. Resolve and validate Project if specified
     project: Optional[Project] = None
-    if donation_in.project_id is not None:
-        project = db.query(Project).filter(Project.id == donation_in.project_id, Project.is_active == True).first()
+    target_project_id = donation_in.projectId or donation_in.project_id
+    if target_project_id is not None:
+        project = db.query(Project).filter(Project.id == str(target_project_id), Project.is_active == True).first()
+        if not project:
+            project = db.query(Project).filter(Project.id == str(target_project_id)).first()
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Target Project with ID {donation_in.project_id} not found or inactive.",
-            )
-        if project.ngo_id != ngo.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Project '{project.title}' (ID {project.id}) does not belong to NGO '{ngo.name}' (ID {ngo.id}).",
+                detail=f"Target Project with ID '{target_project_id}' not found.",
             )
 
-    # 3. Generate identifiers
+    # 2. Resolve and validate NGO
+    ngo: Optional[NGO] = None
+    if donation_in.ngo_id is not None:
+        ngo = db.query(NGO).filter(NGO.id == donation_in.ngo_id, NGO.is_active == True).first()
+        if not ngo and (project is None or donation_in.ngo_id != 1):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Target NGO with ID {donation_in.ngo_id} not found or inactive.",
+            )
+
+    if project and ngo and project.ngo_id is not None and project.ngo_id != ngo.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Project '{project.title or project.name}' (ID {project.id}) does not belong to NGO '{ngo.name}' (ID {ngo.id}).",
+        )
+
+    if not ngo and project and project.ngo_id is not None:
+        ngo = db.query(NGO).filter(NGO.id == project.ngo_id).first()
+
+    # 3. Determine donor info and identifiers
+    donor_name = donation_in.donor_name.strip() if donation_in.donor_name else "Anonymous Supporter"
+    donor_id = None
+    if current_user:
+        if getattr(current_user, "full_name", None):
+            donor_name = current_user.full_name
+        elif getattr(current_user, "username", None):
+            donor_name = current_user.username
+        if hasattr(current_user, "id"):
+            donor_id = current_user.id
+
+    existing_count = db.query(Donation).count()
+    donation_id = f"DON-{str(existing_count + 1).zfill(3)}"
     receipt_num = Donation.generate_receipt_number()
     tx_hash = donation_in.tx_hash or Donation.generate_tx_hash()
     simulated_block = 19800000 + secrets.randbelow(500000)
 
     donation = Donation(
-        ngo_id=ngo.id,
-        project_id=project.id if project else None,
-        donor_name=donation_in.donor_name.strip(),
+        id=donation_id,
+        ngo_id=ngo.id if ngo else None,
+        project_id=str(project.id) if project else None,
+        donor_id=donor_id,
+        donor_name=donor_name,
         donor_email=donation_in.donor_email.strip() if donation_in.donor_email else None,
         donor_pan=donation_in.donor_pan.upper().strip() if donation_in.donor_pan else None,
         is_anonymous=donation_in.is_anonymous,
@@ -65,6 +87,8 @@ def record_donation(db: Session, donation_in: DonationCreate) -> Donation:
         receipt_number=receipt_num,
         tax_benefit_claimed=bool(donation_in.donor_pan),
         notes=donation_in.notes,
+        date=datetime.utcnow().strftime("%Y-%m-%d"),
+        reference=f"FT-{int(datetime.utcnow().timestamp())}",
         is_active=True,
     )
 
@@ -72,17 +96,20 @@ def record_donation(db: Session, donation_in: DonationCreate) -> Donation:
 
     # 4. If confirmed, reflect in NGO and Project totals
     if donation.status == "CONFIRMED":
-        ngo.total_funds_received = round((ngo.total_funds_received or 0.0) + donation.amount, 2)
+        if ngo:
+            ngo.total_funds_received = round((ngo.total_funds_received or 0.0) + donation.amount, 2)
         if project:
-            project.raised_amount = round((project.raised_amount or 0.0) + donation.amount, 2)
+            new_raised = round((project.raised or project.raised_amount or 0.0) + donation.amount, 2)
+            project.raised = new_raised
+            project.raised_amount = new_raised
 
     db.commit()
     db.refresh(donation)
     return donation
 
 
-def get_donation_by_id(db: Session, donation_id: int) -> Optional[Donation]:
-    return db.query(Donation).filter(Donation.id == donation_id, Donation.is_active == True).first()
+def get_donation_by_id(db: Session, donation_id: Any) -> Optional[Donation]:
+    return db.query(Donation).filter(Donation.id == str(donation_id), Donation.is_active == True).first()
 
 
 def list_donations(
@@ -126,7 +153,7 @@ def list_donations(
     return items, total_count, float(total_amount)
 
 
-def get_donation_receipt(db: Session, donation_id: int) -> DonationReceipt:
+def get_donation_receipt(db: Session, donation_id: Any) -> DonationReceipt:
     """Generate statutory 80G tax receipt data for a donation."""
     donation = get_donation_by_id(db, donation_id)
     if not donation:
@@ -140,21 +167,21 @@ def get_donation_receipt(db: Session, donation_id: int) -> DonationReceipt:
 
     return DonationReceipt(
         receipt_number=donation.receipt_number or f"REC-{donation.id}",
-        date=donation.created_at,
+        date=donation.created_at or datetime.utcnow(),
         donor_name="Confidential Donor" if donation.is_anonymous else donation.donor_name,
         donor_pan=donation.donor_pan,
         donor_email=donation.donor_email,
         amount=donation.amount,
-        currency=donation.currency,
-        payment_method=donation.payment_method,
+        currency=donation.currency or "INR",
+        payment_method=donation.payment_method or "UPI",
         tx_hash=donation.tx_hash,
-        ngo_id=ngo.id,
-        ngo_name=ngo.name,
-        ngo_registration_number=ngo.registration_number,
-        ngo_darpan_id=ngo.darpan_id,
-        has_80g_certificate=ngo.has_80g_certificate,
+        ngo_id=ngo.id if ngo else (donation.ngo_id or 1),
+        ngo_name=ngo.name if ngo else "FundTrace Partner NGO",
+        ngo_registration_number=ngo.registration_number if ngo else None,
+        ngo_darpan_id=ngo.darpan_id if ngo else None,
+        has_80g_certificate=ngo.has_80g_certificate if ngo else True,
         project_id=project.id if project else None,
-        project_title=project.title if project else None,
+        project_title=project.title if project else (project.name if project else None),
         verification_link=f"/receipts/verify?hash={donation.tx_hash}&rec={donation.receipt_number}",
     )
 
@@ -248,12 +275,12 @@ def get_donation_stats(
     )
 
 
-def delete_donation(db: Session, donation_id: int) -> bool:
+def delete_donation(db: Session, donation_id: Any) -> bool:
     """Soft delete donation and reverse contribution from project and NGO
 
     totals.
     """
-    donation = db.query(Donation).filter(Donation.id == donation_id, Donation.is_active == True).first()
+    donation = db.query(Donation).filter(Donation.id == str(donation_id), Donation.is_active == True).first()
     if not donation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -269,6 +296,7 @@ def delete_donation(db: Session, donation_id: int) -> bool:
             donation.project.raised_amount = max(
                 0.0, round((donation.project.raised_amount or 0.0) - donation.amount, 2)
             )
+            donation.project.raised = donation.project.raised_amount
 
     donation.is_active = False
     db.commit()

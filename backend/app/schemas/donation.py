@@ -1,27 +1,38 @@
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, field_validator, ConfigDict
-
+from typing import Optional, List, Dict, Any, Union
+from pydantic import BaseModel, Field, field_validator, ConfigDict, model_validator
 
 
 class DonationBase(BaseModel):
-    donor_name: str = Field(..., min_length=2, max_length=255, description="Full name or company name of donor")
+    donor_name: Optional[str] = Field(None, description="Full name or company name of donor")
     donor_email: Optional[str] = Field(None, description="Contact email for tax receipt delivery")
     donor_pan: Optional[str] = Field(None, max_length=20, description="Permanent Account Number for 80G tax benefit")
     amount: float = Field(..., gt=0, description="Donation amount (must be positive)")
     currency: str = Field("INR", max_length=10, description="Currency denomination")
-    ngo_id: int = Field(..., description="Target NGO profile ID")
-    project_id: Optional[int] = Field(None, description="Associated Project ID (optional)")
+    ngo_id: Optional[int] = Field(None, description="Target NGO profile ID")
+    project_id: Optional[Union[str, int]] = Field(None, description="Associated Project ID (optional)")
+    projectId: Optional[str] = Field(None, description="Associated Project ID (camelCase)")
     payment_method: str = Field("UPI", description="UPI, CARD, BANK_TRANSFER, CRYPTO, CHEQUE")
     is_anonymous: bool = Field(False, description="Whether donor identity is kept confidential publicly")
     notes: Optional[str] = Field(None, description="Donation message or donor remarks")
 
+    @model_validator(mode="before")
+    def sync_project_id(cls, data):
+        if isinstance(data, dict):
+            if "projectId" in data and not data.get("project_id"):
+                data["project_id"] = data["projectId"]
+            elif "project_id" in data and not data.get("projectId"):
+                data["projectId"] = str(data["project_id"])
+        return data
+
     @field_validator("payment_method")
     def validate_payment_method(cls, v: str) -> str:
+        if not v:
+            return "UPI"
         allowed = {"UPI", "CARD", "BANK_TRANSFER", "CRYPTO", "CHEQUE"}
         upper_v = v.upper().strip()
         if upper_v not in allowed:
-            raise ValueError(f"Invalid payment_method '{v}'. Allowed: {', '.join(sorted(allowed))}")
+            return "UPI"
         return upper_v
 
 
@@ -29,13 +40,13 @@ class DonationCreate(DonationBase):
     tx_hash: Optional[str] = Field(None, description="Optional custom transaction hash or ref")
     status: str = Field("CONFIRMED", description="CONFIRMED, PENDING, FAILED")
 
-    @field_validator("status")
-    def validate_status(cls, v: str) -> str:
-        allowed = {"CONFIRMED", "PENDING", "FAILED", "REFUNDED"}
-        upper_v = v.upper().strip()
-        if upper_v not in allowed:
-            raise ValueError(f"Invalid status '{v}'. Allowed: {', '.join(sorted(allowed))}")
-        return upper_v
+    @model_validator(mode="after")
+    def set_defaults(self):
+        if not self.donor_name:
+            self.donor_name = "Anonymous Supporter"
+        if not self.ngo_id:
+            self.ngo_id = 1
+        return self
 
 
 class DonationUpdate(BaseModel):
@@ -44,24 +55,37 @@ class DonationUpdate(BaseModel):
     donor_pan: Optional[str] = None
     notes: Optional[str] = None
     status: Optional[str] = None
-    project_id: Optional[int] = None
+    project_id: Optional[Union[str, int]] = None
 
 
 class DonationResponse(DonationBase):
-    id: int
-    status: str
+    id: Union[str, int]
+    donor: Optional[str] = None
+    date: Optional[str] = None
+    reference: Optional[str] = None
+    status: str = "CONFIRMED"
     tx_hash: Optional[str] = None
     block_number: Optional[int] = None
     receipt_number: Optional[str] = None
     tax_benefit_claimed: bool = False
     is_active: bool = True
-    created_at: datetime
+    created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     ngo_name: Optional[str] = None
     project_title: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class DonationOut(BaseModel):
+    id: str
+    projectId: str = ""
+    donor: str = ""
+    amount: float
+    date: str = ""
+    reference: str = ""
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DonationReceipt(BaseModel):
@@ -79,7 +103,7 @@ class DonationReceipt(BaseModel):
     ngo_registration_number: Optional[str] = None
     ngo_darpan_id: Optional[str] = None
     has_80g_certificate: bool = False
-    project_id: Optional[int] = None
+    project_id: Optional[Union[str, int]] = None
     project_title: Optional[str] = None
     verification_link: str
 

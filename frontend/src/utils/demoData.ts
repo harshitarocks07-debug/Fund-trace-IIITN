@@ -44,13 +44,19 @@ export const initialData: FundTraceData = {
     {
       id: "EXP-001", projectId: "PRJ-001", vendor: "ABC Building Supplies", category: "Construction",
       invoiceNumber: "INV-2026-101", claimedAmount: 200_000, extractedAmount: 200_000,
+      extractedVendor: "ABC Building Supplies", extractedInvoiceNumber: "INV-2026-101", extractedDate: "2026-10-18",
       receiptName: "invoice_001.pdf", receiptHash: "a81f4d2c9b7e6a1083d5f7c1e9a2b4d6f8c0e1a3b5d7f9c2e4a6b8d0f2a4c6e8",
       status: "Approved", riskScore: 12, riskReasons: ["Amount matches submitted invoice"],
-      date: "2026-10-18", blockchainStatus: "Not submitted",
+      date: "2026-10-18", blockchainStatus: "Confirmed",
+      blockchainTxHash: "0x7f2c8a901e3b5d6f8a4c2e0b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9a",
+      blockchainBlockNumber: 18492101,
+      blockchainCommitmentRoot: "0x3a8f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a",
+      blockchainAnchoredAt: "2026-10-19T14:30:00Z",
     },
     {
       id: "EXP-002", projectId: "PRJ-001", vendor: "Shree Cement Depot", category: "Materials",
       invoiceNumber: "INV-2026-118", claimedAmount: 160_000, extractedAmount: 120_000,
+      extractedVendor: "Shree Cement Depot", extractedInvoiceNumber: "INV-2026-118", extractedDate: "2026-10-21",
       receiptName: "cement_invoice.jpg", receiptHash: "bf92cfa7d1e34c008b56cfc711e90a5c0d89f72a15c4e3b6098d7f2a1c5e6b48",
       status: "Pending review", riskScore: 58, riskReasons: ["Claimed amount differs from entered receipt amount by ₹40,000"],
       date: "2026-10-21", blockchainStatus: "Not submitted",
@@ -66,6 +72,7 @@ export const initialData: FundTraceData = {
     {
       id: "EXP-004", projectId: "PRJ-003", vendor: "Mobile Care Services", category: "Medical supplies",
       invoiceNumber: "MCS-2026-42", claimedAmount: 74_500, extractedAmount: 74_500,
+      extractedVendor: "Mobile Care Services", extractedInvoiceNumber: "MCS-2026-42", extractedDate: "2026-10-23",
       receiptName: "clinic_supplies.pdf", receiptHash: "3c22d9a86e7f1b4a9c0d2e5f6a8b1c3d4e5f60718293a4b5c6d7e8f901234567",
       status: "More evidence", riskScore: 38, riskReasons: ["Auditor requested an itemized vendor receipt"],
       date: "2026-10-23", blockchainStatus: "Not submitted",

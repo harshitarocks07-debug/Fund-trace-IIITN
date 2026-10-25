@@ -1,4 +1,4 @@
-# FundTrace Backend
+# FundTrace Backend — Architecture, Features & RBAC
 
 High-performance, secure backend API for **FundTrace**, built with FastAPI and SQLAlchemy.
 
@@ -7,7 +7,9 @@ High-performance, secure backend API for **FundTrace**, built with FastAPI and S
 - **Project Management**: Create projects, define target budgets, track raised & utilized amounts, and manage project lifecycles (`PLANNING`, `ACTIVE`, `COMPLETED`, `PAUSED`, `CANCELLED`).
 - **Donation Management**: Record donations, associate with specific projects or general funds, issue receipts, track payment methods, and compute real-time funding statistics.
 - **Expense Management**: Submit expenses, record vendor and invoice details, manage audit statuses (`PENDING`, `APPROVED`, `REJECTED`, `FLAGGED`), attach proof hashes, and track budget utilization.
-- **RESTful Endpoints & Validation**: Pydantic v2 schemas, automated input validation, and interactive Swagger UI / ReDoc.
+- **Multi-Hop Fund Flow Tracking**: End-to-end tracking of grant flows across parent NGOs, regional chapters, and vendors.
+- **OCR Receipt Verification**: Automated text extraction and SHA-256 fingerprinting for expense audit defense.
+- **Role-Based Access Control (RBAC)**: Fine-grained permissions for **Donor**, **NGO Admin**, and **Auditor**.
 
 ## Setup and Running
 
@@ -38,3 +40,24 @@ Run automated pytest suite:
 ```bash
 pytest tests/ -v
 ```
+
+## Role-Based Access Control (RBAC) Matrix
+
+| Capability / Action | Donor | NGO Admin | Independent Auditor |
+|:---|:---:|:---:|:---:|
+| **User Registration & Login** | Yes | Yes | Yes |
+| **Inspect Projects & Budgets** | Yes | Yes | Yes |
+| **Create New Projects** | Forbidden (403) | **Allowed (201)** | Forbidden (403) |
+| **Submit Expense Claims & Receipt Hashes** | Forbidden (403) | **Allowed (201)** | Forbidden (403) |
+| **Make Donations to Projects** | **Allowed (201)** | Forbidden (403) | Forbidden (403) |
+| **Approve / Reject Expense Claims** | Forbidden (403) | Forbidden (403) | **Allowed (200)** |
+| **Verify SHA-256 Receipt Fingerprints** | Forbidden (403) | Allowed (200) | Allowed (200) |
+| **Access Audit Log / Decision Trail** | Forbidden (403) | Allowed (200) | Allowed (200) |
+
+## Pre-Seeded Demonstration Accounts
+
+| Role | Name | Email | Password | Scope |
+|:---|:---|:---|:---|:---|
+| **Donor** | Aarav Mehta | `donor@aarav.org` | `Password123!` | Contribute donations, inspect transparency |
+| **NGO Admin** | Vidya Jyoti Admin | `admin@helpinghands.org` | `Password123!` | Create projects, submit expenses |
+| **Auditor** | Priya Nair | `auditor@trustcheck.org` | `Password123!` | Review claims, audit receipt hashes |

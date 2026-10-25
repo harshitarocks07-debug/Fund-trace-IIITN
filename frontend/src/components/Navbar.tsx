@@ -1,259 +1,105 @@
-import React from 'react';
+import { useState } from "react";
+import { Bell, ChevronDown, LogOut, Search, ShieldCheck, KeyRound } from "lucide-react";
+import type { AuthUser, Role } from "../types";
 
-export type NavView = 'dashboard' | 'directory' | 'projects' | 'donations' | 'expenses' | 'audits' | 'receipts';
-
-interface NavbarProps {
-  currentView: NavView;
-  onNavigate: (view: NavView) => void;
+export interface NavbarProps {
+  currentUser?: AuthUser | null;
+  role: Role;
+  page: string;
+  onOpenAuth: () => void;
+  onLogout: () => void;
   ngoName?: string;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, ngoName = 'Vidya Jyoti Foundation' }) => {
+export function Navbar({ currentUser, role, page, onOpenAuth, onLogout }: NavbarProps) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  const displayName = currentUser?.full_name || (role === "Auditor" ? "Priya Nair" : role === "Donor" ? "Aarav Mehta" : "Helping Hands Admin");
+  const displayEmail = currentUser?.email || (role === "Auditor" ? "auditor@trustcheck.org" : role === "Donor" ? "donor@aarav.org" : "admin@helpinghands.org");
+  const initials = displayName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+
+  const roleBadgeClass = role === "Donor" 
+    ? "badge-donor" 
+    : role === "NGO admin" 
+      ? "badge-ngo" 
+      : "badge-auditor";
+
   return (
-    <header
-      style={{
-        backgroundColor: '#0f172a',
-        borderBottom: '1px solid #1e293b',
-        position: 'sticky',
-        top: 0,
-        zIndex: 50,
-        padding: '0 24px',
-      }}
-    >
-      <div
-        style={{
-          maxWidth: '1440px',
-          margin: '0 auto',
-          height: '68px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '12px',
-        }}
-      >
-        {/* Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', flexShrink: 0 }} onClick={() => onNavigate('dashboard')}>
-          <div
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '10px',
-              background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
-              fontSize: '20px',
-            }}
-          >
-            🛡️
-          </div>
-          <div>
-            <div style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '-0.02em', color: '#f8fafc' }}>
-              FundTrace<span style={{ color: '#38bdf8' }}>.io</span>
-            </div>
-            <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>
-              NGO Management & Transparency Ledger
-            </div>
-          </div>
+    <header className="topbar">
+      <div className="breadcrumbs">
+        <span>FundTrace Workspace</span>
+        <b>/</b>
+        <strong>{page}</strong>
+      </div>
+
+      <div className="topbar-right">
+        <div className="search-box">
+          <Search size={16} />
+          <input aria-label="Search" placeholder="Search claims, receipts, projects..." />
         </div>
 
-        {/* Navigation Tabs */}
-        <nav style={{ display: 'flex', alignItems: 'center', gap: '4px', overflowX: 'auto', padding: '4px 0' }}>
-          <button
-            onClick={() => onNavigate('dashboard')}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease',
-              backgroundColor: currentView === 'dashboard' ? '#1e293b' : 'transparent',
-              color: currentView === 'dashboard' ? '#38bdf8' : '#94a3b8',
-              borderBottom: currentView === 'dashboard' ? '2px solid #38bdf8' : '2px solid transparent',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>🏛️</span> NGO Profile
-          </button>
+        <button className="icon-button notification-button" aria-label="Notifications">
+          <Bell size={18} />
+          <i />
+        </button>
 
-          <button
-            onClick={() => onNavigate('directory')}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease',
-              backgroundColor: currentView === 'directory' ? '#1e293b' : 'transparent',
-              color: currentView === 'directory' ? '#38bdf8' : '#94a3b8',
-              borderBottom: currentView === 'directory' ? '2px solid #38bdf8' : '2px solid transparent',
-              whiteSpace: 'nowrap',
-            }}
+        <div className="user-dropdown-container">
+          <div 
+            className="user-menu" 
+            role="button" 
+            tabIndex={0}
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setDropdownOpen(!dropdownOpen); }}
           >
-            <span>📋</span> Directory
-          </button>
-
-          <button
-            onClick={() => onNavigate('projects')}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease',
-              backgroundColor: currentView === 'projects' ? '#1e293b' : 'transparent',
-              color: currentView === 'projects' ? '#38bdf8' : '#94a3b8',
-              borderBottom: currentView === 'projects' ? '2px solid #38bdf8' : '2px solid transparent',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>🚀</span> Projects
-          </button>
-
-          <button
-            onClick={() => onNavigate('donations')}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease',
-              backgroundColor: currentView === 'donations' ? '#1e293b' : 'transparent',
-              color: currentView === 'donations' ? '#38bdf8' : '#94a3b8',
-              borderBottom: currentView === 'donations' ? '2px solid #38bdf8' : '2px solid transparent',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>💝</span> Donations
-          </button>
-
-          <button
-            onClick={() => onNavigate('expenses')}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease',
-              backgroundColor: currentView === 'expenses' ? '#1e293b' : 'transparent',
-              color: currentView === 'expenses' ? '#38bdf8' : '#94a3b8',
-              borderBottom: currentView === 'expenses' ? '2px solid #38bdf8' : '2px solid transparent',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>💸</span> Expenses
-          </button>
-
-          <button
-            onClick={() => onNavigate('audits')}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease',
-              backgroundColor: currentView === 'audits' ? '#1e293b' : 'transparent',
-              color: currentView === 'audits' ? '#38bdf8' : '#94a3b8',
-              borderBottom: currentView === 'audits' ? '2px solid #38bdf8' : '2px solid transparent',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>🛡️</span> Audit Logs
-          </button>
-
-          <button
-            onClick={() => onNavigate('receipts')}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease',
-              backgroundColor: currentView === 'receipts' ? '#1e293b' : 'transparent',
-              color: currentView === 'receipts' ? '#38bdf8' : '#94a3b8',
-              borderBottom: currentView === 'receipts' ? '2px solid #38bdf8' : '2px solid transparent',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>📄</span> Receipt OCR
-          </button>
-        </nav>
-
-        {/* User / Org context */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'flex-end',
-            }}
-          >
-            <span style={{ fontSize: '13px', fontWeight: 600, color: '#f1f5f9' }}>
-              {ngoName}
+            <span className="avatar">{initials}</span>
+            <span className="user-name">
+              {displayName}
+              <small className={`role-pill ${roleBadgeClass}`}>
+                <ShieldCheck size={11} style={{ marginRight: 3 }} />
+                {role}
+              </small>
             </span>
-            <span style={{ fontSize: '11px', color: '#10b981', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10b981' }} />
-              Verified NGO Partner
-            </span>
+            <ChevronDown size={15} />
           </div>
 
-          <div
-            style={{
-              width: '38px',
-              height: '38px',
-              borderRadius: '50%',
-              backgroundColor: '#334155',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '16px',
-              fontWeight: 700,
-              color: '#38bdf8',
-              border: '2px solid #3b82f6',
-            }}
-          >
-            VJ
-          </div>
+          {dropdownOpen && (
+            <div className="user-popover-menu">
+              <div className="popover-user-info">
+                <strong>{displayName}</strong>
+                <span>{displayEmail}</span>
+                <span className={`role-pill ${roleBadgeClass}`} style={{ marginTop: 4 }}>
+                  {role} {currentUser?.organization ? `· ${currentUser.organization}` : ""}
+                </span>
+              </div>
+              <hr />
+              <button 
+                type="button" 
+                className="popover-action-item"
+                onClick={() => {
+                  setDropdownOpen(false);
+                  onOpenAuth();
+                }}
+              >
+                <KeyRound size={15} />
+                <span>Switch / Register User</span>
+              </button>
+              <button 
+                type="button" 
+                className="popover-action-item text-danger"
+                onClick={() => {
+                  setDropdownOpen(false);
+                  onLogout();
+                }}
+              >
+                <LogOut size={15} />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>
   );
-};
+}
 
 export default Navbar;
