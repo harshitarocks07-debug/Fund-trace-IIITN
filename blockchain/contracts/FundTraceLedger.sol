@@ -341,20 +341,7 @@ contract FundTraceLedger {
         );
     }
 
-    /**
-     * @notice Named variant for strict calldata confidentiality.
-     */
-    function anchorDonationCommitmentBlinded(
-        string calldata donationId,
-        string calldata projectId,
-        bytes32 commitmentHash
-    ) external onlyNgoOrOwner {
-        _anchorDonationCommitmentWithoutAmount(
-            donationId,
-            projectId,
-            commitmentHash
-        );
-    }
+
 
     function _anchorDonationCommitmentWithoutAmount(
         string memory donationId,
