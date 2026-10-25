@@ -62,3 +62,13 @@ pnpm-debug.log*
 *.sw?
 .DS_Store
 Thumbs.db
+
+# Local database files
+backend/*.db
+backend/*.db-*
+backend/*.db.backup-*
+
+# Private local databases and backups
+backend/*.db
+backend/*.db-*
+backend/*.db.backup-*
