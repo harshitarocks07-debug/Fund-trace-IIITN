@@ -1,53 +1,61 @@
-import { Activity, BadgeIndianRupee, Boxes, FileCheck2, HandCoins, LayoutDashboard, Leaf, ScrollText, ShieldCheck } from "lucide-react";
-import type { Role } from "../types";
+import React from 'react';
 
-export type PageKey = "Overview" | "Projects" | "Donations" | "Expenses" | "Receipt verification" | "Audit log";
+interface SidebarProps {
+  currentView: string;
+  onNavigate: (view: any) => void;
+}
 
-const navigation = [
-  { label: "Overview", icon: LayoutDashboard },
-  { label: "Projects", icon: Boxes },
-  { label: "Donations", icon: HandCoins },
-  { label: "Expenses", icon: BadgeIndianRupee },
-  { label: "Receipt verification", icon: FileCheck2 },
-  { label: "Audit log", icon: ScrollText },
-] as const;
+export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => {
+  const menuItems = [
+    { id: 'dashboard', label: 'NGO Dashboard', icon: '🏛️' },
+    { id: 'directory', label: 'NGO Directory', icon: '📋' },
+    { id: 'projects', label: 'Projects', icon: '🚀' },
+    { id: 'donations', label: 'Donations', icon: '💰' },
+    { id: 'expenses', label: 'Expenses', icon: '📑' },
+    { id: 'audits', label: 'Audit Logs', icon: '🛡️' },
+  ];
 
-export function Sidebar({ page, setPage, role, setRole }: {
-  page: PageKey;
-  setPage: (page: PageKey) => void;
-  role: Role;
-  setRole: (role: Role) => void;
-}) {
   return (
-    <aside className="sidebar">
-      <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setPage("Overview"); }}>
-        <span className="brand-mark"><Leaf size={20} /></span>
-        <span>fundtrace<span className="brand-period">.</span><small>TRANSPARENT GIVING</small></span>
-      </a>
-      <div className="workspace-label">WORKSPACE</div>
-      <nav className="side-nav" aria-label="Main navigation">
-        {navigation.filter(({ label }) => role !== "Donor" || (label !== "Receipt verification" && label !== "Audit log")).map(({ label, icon: Icon }) => (
-          <button key={label} className={`nav-item ${page === label ? "active" : ""}`} onClick={() => setPage(label)}>
-            <Icon size={18} strokeWidth={1.8} /><span>{label}</span>
-            {label === "Expenses" && role === "Auditor" && <b className="nav-count">2</b>}
-          </button>
-        ))}
-      </nav>
-      <div className="sidebar-bottom">
-        <div className="security-note">
-          <ShieldCheck size={18} />
-          <div><b>Evidence-first</b><span>Every claim has a trail.</span></div>
-        </div>
-        <div className="role-switch">
-          <label htmlFor="role-select">DEMO ROLE</label>
-          <select id="role-select" value={role} onChange={(event) => setRole(event.target.value as Role)}>
-            <option>NGO admin</option>
-            <option>Auditor</option>
-            <option>Donor</option>
-          </select>
-        </div>
-        <div className="sidebar-foot"><Activity size={14} /> Demo workspace <span className="online-dot" /></div>
+    <aside
+      style={{
+        width: '240px',
+        backgroundColor: '#0f172a',
+        borderRight: '1px solid #1e293b',
+        padding: '24px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+      }}
+    >
+      <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748b', fontWeight: 600, padding: '0 12px 8px' }}>
+        Menu
       </div>
+      {menuItems.map((item) => (
+        <button
+          key={item.id}
+          onClick={() => onNavigate(item.id)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            padding: '10px 14px',
+            borderRadius: '8px',
+            border: 'none',
+            backgroundColor: currentView === item.id ? '#1e293b' : 'transparent',
+            color: currentView === item.id ? '#38bdf8' : '#94a3b8',
+            fontWeight: currentView === item.id ? 600 : 500,
+            fontSize: '14px',
+            cursor: 'pointer',
+            textAlign: 'left',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <span>{item.icon}</span>
+          <span>{item.label}</span>
+        </button>
+      ))}
     </aside>
   );
-}
+};
+
+export default Sidebar;

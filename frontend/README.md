@@ -1,18 +1,29 @@
-# FundTrace frontend
+# FundTrace Frontend
 
-This is the interactive React + TypeScript demo. It runs independently of the planned backend and keeps its sample records in the current browser.
+Modern React 18 + TypeScript + Vite frontend for **FundTrace**.
 
-## Start
+## Features
+- **NGO Dashboard & Directory**: Live profile management, statutory compliance (80G, 12A, FCRA), Darpan IDs, and auditor verification.
+- **Projects & Budgets**: Create initiatives, define budget targets, and track milestones and fund progress.
+- **Donation Ledger**: Record contributions with direct project association and Section 80G tax receipt generation.
+- **Expenditure & Utilization**: Itemized vendor invoices, category breakdowns, and compliance audit workflows (`PENDING`, `APPROVED`, `FLAGGED`, `REJECTED`).
 
-```powershell
-npm install
-npm run dev
-```
+## Setup and Running
 
-Use the role selector in the sidebar to switch between NGO admin, auditor, and donor demo views. Select **Reset demo** to restore the original sample data.
+1. Install packages:
+   ```bash
+   npm install
+   ```
 
-Project cards open a funding and spending breakdown. Expense review details include receipt metadata, claimed-versus-entered amounts, risk explanations, and the local audit timeline. Donors see approved expense summaries and their own contribution records only.
+2. Start development server:
+   ```bash
+   npm run dev
+   ```
 
-`npm run build` runs the TypeScript check and creates a production bundle in `dist/`.
+3. Production build & type check:
+   ```bash
+   npm run build
+   ```
 
-The demo does not authenticate users, upload receipts, process OCR, move donations, or write blockchain transactions.
+4. Open in browser:
+   [http://localhost:5173](http://localhost:5173)
