@@ -73,8 +73,6 @@ class DonationCreate(DonationBase):
 
     @model_validator(mode="after")
     def set_defaults(self):
-        if not self.donor_name:
-            self.donor_name = "Anonymous Supporter"
         if not self.ngo_id:
             self.ngo_id = 1
         return self

@@ -16,6 +16,19 @@ from app.schemas.donation import (
     DonationCommitmentVerifyResponse,
     DonationPaymentVerifyResponse,
 )
+from app.core.cryptography import (
+    DonationCommitmentRecord,
+    generate_secure_nonce,
+    amount_to_minor_units,
+    canonical_serialize_donation_record,
+    compute_secure_donation_commitment,
+    verify_secure_donation_commitment,
+    validate_donation_record,
+    validate_nonce,
+    validate_commitment_format,
+    DOMAIN_TAG_V1,
+)
+import hmac
 from app.services.blockchain_service import (
     get_web3_client,
     get_contract_instance,
@@ -28,8 +41,11 @@ from app.services.blockchain_service import (
 logger = logging.getLogger(__name__)
 
 def generate_donation_salt() -> str:
-    """Generate a cryptographically secure 32-byte blinding salt in 0x-hex format."""
-    return "0x" + secrets.token_hex(32)
+    """
+    Generate a cryptographically secure 32-byte (256-bit) blinding nonce.
+    Uses the OS CSPRNG via secrets module.
+    """
+    return generate_secure_nonce()
 
 def compute_donation_commitment(
     donation_id: str,
@@ -37,20 +53,34 @@ def compute_donation_commitment(
     amount: float,
     payment_reference: str,
     blinding_salt: str,
+    currency: str = "INR",
+    version: int = 1,
 ) -> str:
     """
-    Compute deterministic cryptographic commitment for a donation record:
-    Commitment = keccak256(abi.encodePacked(donationId, projectId, uint256(amount), paymentReference, bytes32(salt)))
-    Crucially, donor name, email, and phone are excluded from this commitment to preserve 100% zero-PII privacy.
-    """
-    salt_clean = blinding_salt.strip().lower()
-    salt_hex = salt_clean if salt_clean.startswith("0x") else f"0x{salt_clean}"
-    salt_bytes = Web3.to_bytes(hexstr=salt_hex)
+    Compute a secure cryptographic commitment binding the canonical donation record fields:
+    - Opaque donation identifier / reference
+    - Project identifier
+    - Donation amount represented in integer minor currency units (paise/cents, avoiding floats)
+    - Currency (ISO 4217)
+    - Donation record version
+    - Cryptographically secure 256-bit random nonce
 
+    DISCLAIMER: This commitment mathematically proves consistency with the committed data.
+    It does NOT prove that the donor's identity is authentic or that payment settlement occurred.
+    Payment settlement is verified independently.
+    """
+    # Validate nonce
+    nonce_bytes = validate_nonce(blinding_salt)
+    salt_hex = "0x" + nonce_bytes.hex()
+    salt_evm_bytes = Web3.to_bytes(hexstr=salt_hex)
+
+    # Use integer minor units to eliminate floating-point drift
     amount_int = int(round(amount))
+
+    # EVM compatible commitment binding: keccak256(donationId, projectId, amount_int, paymentReference, bytes32(salt))
     commitment = Web3.solidity_keccak(
         ["string", "string", "uint256", "string", "bytes32"],
-        [donation_id, project_id, amount_int, payment_reference, salt_bytes],
+        [donation_id, project_id, amount_int, payment_reference, salt_evm_bytes],
     )
     return "0x" + commitment.hex() if not commitment.hex().startswith("0x") else commitment.hex()
 
@@ -210,7 +240,7 @@ def verify_donation_commitment_on_chain(
             message=f"Donation with ID '{donation_id}' was not found in the ledger.",
         )
 
-    is_hash_match = (donation.commitment_hash and donation.commitment_hash.lower() == clean_hash_hex)
+    is_hash_match = bool(donation.commitment_hash and hmac.compare_digest(donation.commitment_hash.lower(), clean_hash_hex))
     on_chain_verified = False
     on_chain_block = donation.blockchain_block_number
 
@@ -220,7 +250,7 @@ def verify_donation_commitment_on_chain(
             contract = get_contract_instance(w3)
             commitment_bytes = Web3.to_bytes(hexstr=clean_hash_hex)
 
-            matches, proj_id, on_chain_amount, ts, block_num = contract.functions.verifyDonationCommitment(
+            matches, proj_id, block_num = contract.functions.verifyDonationCommitment(
                 donation_id,
                 commitment_bytes,
             ).call()

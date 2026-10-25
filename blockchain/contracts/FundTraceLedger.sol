@@ -334,6 +334,33 @@ contract FundTraceLedger {
         string calldata projectId,
         bytes32 commitmentHash
     ) external onlyNgoOrOwner {
+        _anchorDonationCommitmentWithoutAmount(
+            donationId,
+            projectId,
+            commitmentHash
+        );
+    }
+
+    /**
+     * @notice Named variant for strict calldata confidentiality.
+     */
+    function anchorDonationCommitmentBlinded(
+        string calldata donationId,
+        string calldata projectId,
+        bytes32 commitmentHash
+    ) external onlyNgoOrOwner {
+        _anchorDonationCommitmentWithoutAmount(
+            donationId,
+            projectId,
+            commitmentHash
+        );
+    }
+
+    function _anchorDonationCommitmentWithoutAmount(
+        string memory donationId,
+        string memory projectId,
+        bytes32 commitmentHash
+    ) private {
         require(bytes(donationId).length > 0, "Empty donation ID");
         require(projects[projectId].createdAt > 0, "Project does not exist");
         require(commitmentHash != bytes32(0), "Empty commitment hash");
@@ -649,4 +676,3 @@ contract FundTraceLedger {
         return projectIds.length;
     }
 }
-
