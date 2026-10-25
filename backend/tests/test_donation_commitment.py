@@ -60,6 +60,7 @@ def db_session():
         role=UserRole.DONOR.value,
         organization="Independent Donor",
         is_active=True,
+        hashed_password="test-only-donor-hash",
     )
     session.add(donor)
 
@@ -70,6 +71,7 @@ def db_session():
         role=UserRole.AUDITOR.value,
         organization="TrustCheck",
         is_active=True,
+        hashed_password="test-only-auditor-hash",
     )
     session.add(auditor)
     session.commit()

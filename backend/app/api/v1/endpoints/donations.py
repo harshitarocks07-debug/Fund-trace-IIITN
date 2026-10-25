@@ -163,7 +163,7 @@ def record_donation(
 def anchor_donation_endpoint(
     donation_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_auditor_or_ngo),
+    current_user: User = Depends(require_ngo_admin_or_auditor),
 ):
     """Manually anchor or re-anchor a donation commitment on-chain."""
     donation = db.query(Donation).filter(Donation.id == donation_id).first()
@@ -217,7 +217,7 @@ def verify_payment_endpoint(
     donation_id: str,
     request: DonationPaymentVerifyRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_auditor_or_ngo),
+    current_user: User = Depends(require_ngo_admin_or_auditor),
 ):
     """
     Verify actual payment transaction settlement separately from the donation record commitment.

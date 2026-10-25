@@ -304,7 +304,7 @@ def verify_actual_payment_transaction(
         action="Donation Payment Verified",
         actor=donation.payment_verified_by,
         actor_id=auditor_or_admin.id if auditor_or_admin else None,
-        reason=f"Payment settlement confirmed for donation {donation.id} (Ref: {donation.reference}). Tx: {payment_tx_hash[:16]}...",
+        reason=f"Payment settlement confirmed for donation {donation.id} (Ref: {donation.reference}). Tx: {payment_tx_hash}",
         date=now.strftime("%Y-%m-%d"),
     )
     db.add(audit_entry)

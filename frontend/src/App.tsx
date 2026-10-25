@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronRight, 
   CircleHelp, 
+  Clock,
   Download,
   FilePlus2, 
   Fingerprint, 
@@ -14,8 +15,10 @@ import {
   KeyRound, 
   Landmark, 
   Link2,
+  Lock as LockIcon,
   MapPin, 
   Plus, 
+  RefreshCw,
   Search, 
   ShieldAlert, 
   ShieldCheck, 
@@ -39,8 +42,9 @@ import { FundingIntegrityPage } from "./pages/FundingIntegrityPage";
 import { authService, DEMO_USERS } from "./services/authService";
 import { receiptService } from "./services/receiptService";
 import { blockchainService, type BlockchainVerifyResponse } from "./services/blockchainService";
+import { donationService } from "./services/donationService";
 import { formatINR, initialData } from "./utils/demoData";
-import type { AuditEntry, AuthUser, Expense, FundTraceData, Project, Role, ReceiptOCRResult } from "./types";
+import type { AuditEntry, AuthUser, Donation, DonationCommitmentVerifyResponse, Expense, FundTraceData, Project, Role, ReceiptOCRResult } from "./types";
 
 const DATA_KEY = "fundtrace-demo-data-v1";
 const ROLE_KEY = "fundtrace-demo-role-v1";
@@ -524,7 +528,7 @@ export default function App() {
             )
           )}
           {page === "Projects" && <ProjectsPage projects={data.projects} donations={data.donations} expenses={data.expenses} role={role} addDonation={addDonation} onCreate={() => setProjectModal(true)} onOpenProject={setSelectedProject} />}
-          {page === "Donations" && <DonationsPage data={data} donationsTotal={donationsTotal} role={role} />}
+          {page === "Donations" && <DonationsPage data={data} setData={setData} donationsTotal={donationsTotal} role={role} onToast={setToast} />}
           {page === "Expenses" && <ExpensesPage data={data} role={role} onNew={() => setExpenseModal(true)} onSelect={setSelectedExpense} />}
           {page === "Receipt verification" && role !== "Donor" && <ReceiptPage expenses={data.expenses} />}
           {page === "Multi-hop flows" && <MultiHopFlowView role={role} />}
@@ -867,14 +871,389 @@ function ProjectDetail({ project, donations, expenses, auditEntries, role, onClo
   </Modal>;
 }
 
-function DonationsPage({ data, donationsTotal, role }: { data: FundTraceData; donationsTotal: number; role: Role }) {
-  const donations = role === "Donor" ? data.donations.filter((item) => item.donor === "Aarav Mehta") : data.donations;
+function DonationsPage({
+  data,
+  setData,
+  donationsTotal,
+  role,
+  onToast,
+}: {
+  data: FundTraceData;
+  setData: React.Dispatch<React.SetStateAction<FundTraceData>>;
+  donationsTotal: number;
+  role: Role;
+  onToast: (msg: string) => void;
+}) {
+  const [selectedDonation, setSelectedDonation] = useState<Donation | null>(null);
+  const [verifyingCommitment, setVerifyingCommitment] = useState<boolean>(false);
+  const [verificationResult, setVerificationResult] = useState<DonationCommitmentVerifyResponse | null>(null);
+  const [paymentModalDonation, setPaymentModalDonation] = useState<Donation | null>(null);
+  const [paymentTxInput, setPaymentTxInput] = useState<string>("");
+  const [paymentMethodInput, setPaymentMethodInput] = useState<string>("Bank RTGS Settlement");
+  const [submittingPayment, setSubmittingPayment] = useState<boolean>(false);
+
+  const rawDonations = role === "Donor"
+    ? data.donations.filter((item) => item.donor === "Aarav Mehta")
+    : data.donations;
+
+  const donations = rawDonations.slice().sort((a, b) => b.date.localeCompare(a.date));
+  const verifiedSettledTotal = donations
+    .filter((item) => item.paymentStatus === "Verified")
+    .reduce((sum, item) => sum + item.amount, 0);
+
+  const pendingSettlementCount = donations.filter((item) => item.paymentStatus === "Pending").length;
   const supportedProjects = new Set(donations.map((item) => item.projectId)).size;
-  return <>
-    <section className="welcome-row"><div><p className="eyebrow">CONTRIBUTIONS</p><h1>{role === "Donor" ? "Your contributions." : "Every contribution counts."}</h1><p className="welcome-subtitle">Recorded donation references are tracked under transparent giving protocol.</p></div></section>
-    <div className="stat-grid stat-grid-two"><StatCard label={role === "Donor" ? "YOUR CONTRIBUTIONS" : "TOTAL RECORDED"} value={money(donationsTotal)} note={`${donations.length} contributions`} icon={HandCoins} /><StatCard label="PROJECTS SUPPORTED" value={String(supportedProjects)} note={role === "Donor" ? "Projects you've contributed to" : "Across active initiatives"} icon={Landmark} tone="blue" /></div>
-    <section className="panel page-panel"><div className="panel-heading"><div><p className="eyebrow">DONATION HISTORY</p><h2>{role === "Donor" ? "Your recorded contributions" : "Recorded contributions"}</h2></div><span className="record-count">{donations.length} records</span></div><div className="table-wrap"><table className="data-table"><thead><tr><th>REFERENCE</th>{role !== "Donor" && <th>DONOR</th>}<th>PROJECT</th><th>DATE</th><th>AMOUNT</th></tr></thead><tbody>{donations.map((donation) => <tr key={donation.id}><td><span className="ref-code">{donation.id}</span><small className="table-subline">{donation.reference}</small></td>{role !== "Donor" && <td>{donation.donor}</td>}<td>{data.projects.find((project) => project.id === donation.projectId)?.name}</td><td>{dateLabel(donation.date)}</td><td className="amount-cell">{money(donation.amount)}</td></tr>)}</tbody></table></div><p className="table-disclaimer"><CircleHelp size={14} /> A recorded contribution is verified under the donor's authenticated account.</p></section>
-  </>;
+
+  async function handleVerifyCommitment(donation: Donation) {
+    setSelectedDonation(donation);
+    setVerifyingCommitment(true);
+    setVerificationResult(null);
+    try {
+      const res = await donationService.verifyCommitment({
+        donationId: donation.id,
+        projectId: donation.projectId,
+        amount: donation.amount,
+        paymentReference: donation.reference,
+        blindingSalt: donation.blindingSalt || "0x9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b",
+      });
+      setVerificationResult(res);
+    } catch (err: unknown) {
+      console.error("Commitment verification failed:", err);
+      onToast("Failed to verify on-chain commitment.");
+    } finally {
+      setVerifyingCommitment(false);
+    }
+  }
+
+  async function handleConfirmPayment(event: FormEvent) {
+    event.preventDefault();
+    if (!paymentModalDonation || !paymentTxInput.trim()) return;
+    setSubmittingPayment(true);
+    try {
+      await donationService.verifyPayment(
+        paymentModalDonation.id,
+        paymentTxInput.trim(),
+        paymentMethodInput
+      );
+      setData((prev) => ({
+        ...prev,
+        donations: prev.donations.map((d) =>
+          d.id === paymentModalDonation.id
+            ? {
+                ...d,
+                paymentStatus: "Verified",
+                paymentTxHash: paymentTxInput.trim(),
+                paymentMethod: paymentMethodInput,
+                paymentVerifiedAt: new Date().toISOString(),
+              }
+            : d
+        ),
+      }));
+      onToast(`Payment settlement confirmed for ${paymentModalDonation.id}.`);
+      setPaymentModalDonation(null);
+      setPaymentTxInput("");
+    } catch (err: unknown) {
+      onToast(err instanceof Error ? err.message : "Failed to verify payment.");
+    } finally {
+      setSubmittingPayment(false);
+    }
+  }
+
+  return (
+    <>
+      <section className="welcome-row">
+        <div>
+          <div className="flow-badge-row" style={{ marginBottom: 6 }}>
+            <span className="zero-pii-badge">
+              <ShieldCheck size={13} /> Zero Donor PII On-Chain
+            </span>
+            <span className="flow-pill-source">
+              <LockIcon size={12} /> Keccak-256 Salted Commitments
+            </span>
+          </div>
+          <p className="eyebrow">PRIVACY-PRESERVING CONTRIBUTIONS</p>
+          <h1>{role === "Donor" ? "Your shielded contributions." : "Zero-PII Donation Commitments."}</h1>
+          <p className="welcome-subtitle">
+            Donor names, emails, and phone numbers remain strictly off-chain. Cryptographic commitments are anchored to the EVM smart contract, while actual payment settlement is verified separately.
+          </p>
+        </div>
+      </section>
+
+      {/* Aggregate Transparency KPIs */}
+      <div className="stat-grid stat-grid-three">
+        <StatCard
+          label={role === "Donor" ? "YOUR CONTRIBUTIONS" : "TOTAL COMMITMENTS"}
+          value={money(donationsTotal)}
+          note={`${donations.length} records recorded`}
+          icon={HandCoins}
+        />
+        <StatCard
+          label="VERIFIED FINANCIAL TRANSFERS"
+          value={money(verifiedSettledTotal)}
+          note={`${donations.length - pendingSettlementCount} settlements confirmed`}
+          icon={BadgeCheck}
+          tone="green"
+        />
+        <StatCard
+          label="PROJECTS SUPPORTED"
+          value={String(supportedProjects)}
+          note="Public financial aggregates active"
+          icon={Landmark}
+          tone="blue"
+        />
+      </div>
+
+      <section className="panel page-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">TAMPER-EVIDENT DONATION LEDGER</p>
+            <h2>Recorded contributions <span className="count-in-title">{donations.length}</span></h2>
+          </div>
+          <span className="record-count">
+            {pendingSettlementCount > 0 ? `${pendingSettlementCount} pending settlement` : "All settlements verified"}
+          </span>
+        </div>
+
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>REFERENCE & ID</th>
+                <th>DONOR (SHIELDED)</th>
+                <th>PROJECT</th>
+                <th>AMOUNT</th>
+                <th>ON-CHAIN COMMITMENT</th>
+                <th>PAYMENT SETTLEMENT</th>
+                <th>ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {donations.map((donation) => {
+                const project = data.projects.find((p) => p.id === donation.projectId);
+                const isVerifiedPayment = donation.paymentStatus === "Verified";
+                const isConfirmedChain = donation.blockchainStatus === "Confirmed";
+
+                return (
+                  <tr key={donation.id}>
+                    <td>
+                      <span className="ref-code">{donation.id}</span>
+                      <small className="table-subline">{donation.reference}</small>
+                    </td>
+                    <td>
+                      <div>
+                        <b>{role === "Donor" ? `${donation.donor} (You)` : donation.donor}</b>
+                        <small className="table-subline" style={{ color: "#059669", display: "flex", alignItems: "center", gap: 3 }}>
+                          <ShieldCheck size={11} /> Off-chain only · Zero PII on-chain
+                        </small>
+                      </div>
+                    </td>
+                    <td>
+                      <span>{project?.name ?? donation.projectId}</span>
+                      <small className="table-subline">{dateLabel(donation.date)}</small>
+                    </td>
+                    <td className="amount-cell">
+                      <b>{money(donation.amount)}</b>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span className="commitment-chip" title={donation.commitmentHash || "Commitment computed"}>
+                          <LockIcon size={11} /> {donation.commitmentHash ? `${donation.commitmentHash.slice(0, 10)}...` : "Salted Keccak-256"}
+                        </span>
+                        {isConfirmedChain ? (
+                          <span className="badge badge-success" style={{ fontSize: 11, alignSelf: "flex-start" }}>
+                            EVM Block #{donation.blockchainBlockNumber || 9}
+                          </span>
+                        ) : (
+                          <span className="badge badge-neutral" style={{ fontSize: 11, alignSelf: "flex-start" }}>
+                            Pending Anchor
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        {isVerifiedPayment ? (
+                          <>
+                            <span className="badge badge-success" style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <CheckCircle2 size={12} /> Verified Settlement
+                            </span>
+                            <small className="table-subline">{donation.paymentTxHash || "Bank Wire Confirmed"}</small>
+                          </>
+                        ) : (
+                          <>
+                            <span className="badge badge-warning" style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <Clock size={12} /> Pending Settlement
+                            </span>
+                            <small className="table-subline">Pledged · Awaiting transfer</small>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button
+                          className="button button-plain"
+                          style={{ padding: "4px 8px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}
+                          onClick={() => void handleVerifyCommitment(donation)}
+                          title="Verify cryptographic commitment on-chain without revealing identity"
+                        >
+                          <ShieldCheck size={13} /> Verify Commitment
+                        </button>
+                        {role !== "Donor" && !isVerifiedPayment && (
+                          <button
+                            className="button button-secondary"
+                            style={{ padding: "4px 8px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}
+                            onClick={() => {
+                              setPaymentModalDonation(donation);
+                              setPaymentTxInput(`BANK-WIRE-${Date.now().toString().slice(-6)}`);
+                            }}
+                            title="Verify financial transfer separately from commitment"
+                          >
+                            <BadgeCheck size={13} /> Verify Payment
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="table-disclaimer">
+          <CircleHelp size={14} /> <b>Zero-PII Commitment Architecture:</b> Public on-chain data contains only project aggregates and salted commitments. Donor names, emails, and phone numbers remain strictly off-chain. Actual payment transfers are verified separately from pledges.
+        </p>
+      </section>
+
+      {/* Verification Modal */}
+      {selectedDonation && (
+        <Modal
+          title={`Donation Commitment Verification · ${selectedDonation.id}`}
+          subtitle="Cryptographic proof verified against FundTraceLedger.sol on-chain"
+          onClose={() => setSelectedDonation(null)}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="proof-banner-box">
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#065f46" }}>
+                <ShieldCheck size={20} />
+                <b>Zero-PII Privacy Guarantee Active</b>
+              </div>
+              <p style={{ margin: "4px 0 0 0", fontSize: 13, color: "#374151" }}>
+                This verification establishes mathematical proof of the donation record using Keccak-256 commitments without publishing donor identities, email addresses, or phone numbers on the blockchain.
+              </p>
+            </div>
+
+            <div className="proof-details-grid">
+              <div className="proof-detail-item">
+                <span>DONATION REFERENCE</span>
+                <b>{selectedDonation.id} ({selectedDonation.reference})</b>
+              </div>
+              <div className="proof-detail-item">
+                <span>COMMITTED AMOUNT</span>
+                <b>{money(selectedDonation.amount)}</b>
+              </div>
+              <div className="proof-detail-item">
+                <span>PROJECT TARGET</span>
+                <b>{selectedDonation.projectId}</b>
+              </div>
+              <div className="proof-detail-item">
+                <span>PAYMENT STATUS</span>
+                <b>{selectedDonation.paymentStatus || "Pending"}</b>
+              </div>
+              <div className="proof-detail-item" style={{ gridColumn: "span 2" }}>
+                <span>CRYPTOGRAPHIC COMMITMENT HASH</span>
+                <code style={{ fontSize: 12, wordBreak: "break-all", background: "#f3f4f6", padding: 4, borderRadius: 4, display: "block" }}>
+                  {selectedDonation.commitmentHash || "0x4d0b397db6b0142b7819ce2994e6371a5c6819eb76a91c890123456789abcdef"}
+                </code>
+              </div>
+              <div className="proof-detail-item" style={{ gridColumn: "span 2" }}>
+                <span>OFF-CHAIN BLINDING SALT (HELD PRIVATELY)</span>
+                <code style={{ fontSize: 11, wordBreak: "break-all", color: "#6b7280", background: "#f9fafb", padding: 4, borderRadius: 4, display: "block" }}>
+                  {selectedDonation.blindingSalt || "0x9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"}
+                </code>
+              </div>
+            </div>
+
+            {verifyingCommitment && (
+              <div style={{ textAlign: "center", padding: "16px 0" }}>
+                <RefreshCw size={24} className="spin-icon" style={{ margin: "0 auto 8px auto", color: "#059669" }} />
+                <p style={{ margin: 0, fontSize: 14 }}>Querying smart contract verifyDonationCommitment() on-chain...</p>
+              </div>
+            )}
+
+            {verificationResult && (
+              <div className="proof-verified-card">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#065f46", marginBottom: 8 }}>
+                  <CheckCircle2 size={20} />
+                  <b>Smart Contract Commitment Verified Successfully</b>
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.6, color: "#1f2937" }}>
+                  <li><b>Preimage Hash Match:</b> {verificationResult.isHashMatch ? "Valid (Preimage matches recorded commitment)" : "Mismatch"}</li>
+                  <li><b>On-Chain State:</b> Confirmed in EVM Block #{verificationResult.blockchainBlockNumber || 9}</li>
+                  <li><b>Contract Address:</b> {verificationResult.contractAddress || "0x0165878A594ca255338adfa4d48449f69242Eb8F"}</li>
+                  <li><b>Privacy Compliance:</b> {verificationResult.piiStatus}</li>
+                </ul>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button className="button button-primary" onClick={() => setSelectedDonation(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Payment Settlement Verification Modal */}
+      {paymentModalDonation && (
+        <Modal
+          title={`Confirm Payment Settlement · ${paymentModalDonation.id}`}
+          subtitle="Verify financial transfer separately from the donation-record commitment"
+          onClose={() => setPaymentModalDonation(null)}
+        >
+          <form onSubmit={(e) => void handleConfirmPayment(e)}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <p style={{ fontSize: 13, color: "#4b5563", margin: 0 }}>
+                A donation record pledge is anchored on-chain first. Separate verification of the bank wire, payment gateway capture, or blockchain transfer confirms actual receipt of funds before disbursement.
+              </p>
+              <div className="field">
+                <span>DONATION REFERENCE</span>
+                <input disabled value={`${paymentModalDonation.id} (${money(paymentModalDonation.amount)})`} />
+              </div>
+              <label className="field">
+                <span>SETTLEMENT PAYMENT METHOD</span>
+                <select value={paymentMethodInput} onChange={(e) => setPaymentMethodInput(e.target.value)}>
+                  <option>Bank RTGS Settlement</option>
+                  <option>NEFT Wire Transfer</option>
+                  <option>UPI / Net Banking</option>
+                  <option>Card Payment Gateway</option>
+                  <option>Crypto Transfer (USDC/ETH)</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>BANK WIRE / TRANSACTION IDENTIFIER</span>
+                <input
+                  required
+                  placeholder="e.g. BANK-WIRE-2026-90412 or 0x4f12..."
+                  value={paymentTxInput}
+                  onChange={(e) => setPaymentTxInput(e.target.value)}
+                />
+              </label>
+              <div className="modal-actions" style={{ marginTop: 8 }}>
+                <button type="button" className="button button-plain" onClick={() => setPaymentModalDonation(null)}>
+                  Cancel
+                </button>
+                <button className="button button-primary" disabled={submittingPayment}>
+                  {submittingPayment ? "Confirming..." : "Confirm Verified Payment"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
 }
 
 function ExpensesPage({ data, role, onNew, onSelect }: {

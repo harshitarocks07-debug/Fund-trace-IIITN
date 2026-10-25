@@ -122,6 +122,29 @@ export interface Donation {
   amount: number;
   date: string;
   reference: string;
+  paymentStatus?: "Pending" | "Verified" | "Failed" | string;
+  paymentMethod?: string;
+  paymentTxHash?: string;
+  paymentVerifiedAt?: string;
+  blockchainStatus?: "Not submitted" | "Submitting" | "Confirmed" | "Failed" | string;
+  commitmentHash?: string;
+  blockchainTxHash?: string;
+  blockchainBlockNumber?: number;
+  blindingSalt?: string;
+}
+
+export interface DonationCommitmentVerifyResponse {
+  donationId: string;
+  verified: boolean;
+  onChainVerified: boolean;
+  isHashMatch: boolean;
+  commitmentHash: string;
+  projectId: string;
+  amount: number;
+  blockchainBlockNumber?: number;
+  contractAddress?: string;
+  message: string;
+  piiStatus: string;
 }
 
 export interface Expense {
