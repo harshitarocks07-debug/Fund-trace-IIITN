@@ -24,3 +24,9 @@ def get_db() -> Generator[Session, None, None]:
     finally:
         db.close()
 
+
+def init_db() -> None:
+    """Initialize database tables for the production FundTrace schema."""
+    from app.db.base import Base
+    import app.models  # ensure models are registered
+    Base.metadata.create_all(bind=engine)
