@@ -172,6 +172,15 @@ export const DonationsPage: React.FC = () => {
     ];
   }, [stats]);
 
+  if (loading) {
+    return (
+      <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '80px 24px', textAlign: 'center', color: '#94a3b8' }}>
+        <div style={{ fontSize: '36px', marginBottom: '16px' }}>⏳</div>
+        <p style={{ fontSize: '16px', fontWeight: 500 }}>Loading donations ledger and project distributions...</p>
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '32px 24px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       {/* Header */}

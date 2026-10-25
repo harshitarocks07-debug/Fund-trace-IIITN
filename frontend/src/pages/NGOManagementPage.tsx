@@ -127,10 +127,17 @@ export const NGOManagementPage: React.FC<NGOManagementPageProps> = ({ onSelectNG
         }}
       >
         <div>
-          <h1 style={{ fontSize: '26px', fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.02em', marginBottom: '6px' }}>
-            NGO Directory & Management
-          </h1>
-          <p style={{ fontSize: '14px', color: '#94a3b8' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
+            <h1 style={{ fontSize: '26px', fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.02em', margin: 0 }}>
+              NGO Directory & Management
+            </h1>
+            {total > 0 && (
+              <span style={{ fontSize: '12px', fontWeight: 600, backgroundColor: '#334155', color: '#38bdf8', padding: '3px 10px', borderRadius: '12px' }}>
+                {total} Registered
+              </span>
+            )}
+          </div>
+          <p style={{ fontSize: '14px', color: '#94a3b8', margin: 0 }}>
             Manage registered non-profit organizations, verify compliance documents, and inspect transparency scores.
           </p>
         </div>

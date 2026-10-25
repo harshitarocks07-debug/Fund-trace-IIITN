@@ -39,9 +39,46 @@ export const ReceiptVerificationPage: React.FC = () => {
           <div style={{ fontSize: '15px', fontWeight: 600, color: '#f8fafc', marginBottom: '6px' }}>
             Upload Vendor Invoice or Purchase Receipt
           </div>
-          <p style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '20px' }}>
+          <p style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '16px' }}>
             Supports PDF, PNG, JPG scans up to 10MB
           </p>
+
+          <input
+            type="file"
+            id="receipt-file-input"
+            style={{ display: 'none' }}
+            accept=".pdf,.png,.jpg,.jpeg"
+            onChange={(e) => {
+              if (e.target.files && e.target.files[0]) {
+                setSelectedFile(e.target.files[0].name);
+              }
+            }}
+          />
+
+          <div style={{ marginBottom: '20px' }}>
+            <label
+              htmlFor="receipt-file-input"
+              style={{
+                display: 'inline-block',
+                padding: '8px 18px',
+                backgroundColor: '#334155',
+                color: '#f8fafc',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 600,
+                transition: 'background-color 0.15s ease',
+              }}
+            >
+              Choose Receipt File
+            </label>
+            {selectedFile && (
+              <div style={{ fontSize: '13px', color: '#38bdf8', marginTop: '8px' }}>
+                Selected: <strong>{selectedFile}</strong>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={handleSimulateScan}
             disabled={scanning}
@@ -53,6 +90,7 @@ export const ReceiptVerificationPage: React.FC = () => {
               borderRadius: '8px',
               fontWeight: 600,
               cursor: 'pointer',
+              opacity: scanning ? 0.7 : 1,
             }}
           >
             {scanning ? 'Running OCR & Fraud Check...' : 'Run Receipt Verification'}
@@ -88,4 +126,3 @@ export const ReceiptVerificationPage: React.FC = () => {
     </div>
   );
 };
-

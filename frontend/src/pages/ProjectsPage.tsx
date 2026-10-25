@@ -6,7 +6,7 @@ interface ProjectsPageProps {
   onSelectProject?: (projectId: number) => void;
 }
 
-export const ProjectsPage: React.FC<ProjectsPageProps> = () => {
+export const ProjectsPage: React.FC<ProjectsPageProps> = ({ onSelectProject }) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -125,6 +125,7 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = () => {
   };
 
   const openBudgetBreakdown = async (projectId: number) => {
+    if (onSelectProject) onSelectProject(projectId);
     try {
       const summary = await projectService.getProjectBudget(projectId);
       setBudgetModalProject(summary);

@@ -92,20 +92,38 @@ export const NGODashboard: React.FC<NGODashboardProps> = ({ ngoId = 1, onNavigat
         <p style={{ color: '#ef4444', fontSize: '18px', marginBottom: '16px' }}>
           {errorMessage || 'NGO Profile Not Found'}
         </p>
-        <button
-          onClick={() => loadNGOData(1)}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#3b82f6',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: 600,
-          }}
-        >
-          Load Default NGO Profile
-        </button>
+        <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+          <button
+            onClick={() => loadNGOData(1)}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: '#3b82f6',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Load Default NGO Profile
+          </button>
+          {onNavigateToDirectory && (
+            <button
+              onClick={onNavigateToDirectory}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#334155',
+                color: '#f8fafc',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              Browse Directory
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -269,6 +287,25 @@ export const NGODashboard: React.FC<NGODashboardProps> = ({ ngoId = 1, onNavigat
             <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 600, marginTop: '4px' }}>
               ✨ High Audit Rating
             </div>
+            {onNavigateToDirectory && (
+              <button
+                onClick={onNavigateToDirectory}
+                style={{
+                  marginTop: '12px',
+                  width: '100%',
+                  padding: '6px 12px',
+                  backgroundColor: '#1e293b',
+                  color: '#38bdf8',
+                  border: '1px solid #334155',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}
+              >
+                📋 Switch NGO
+              </button>
+            )}
           </div>
         </div>
       </div>

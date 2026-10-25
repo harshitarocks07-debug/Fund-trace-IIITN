@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
-import { Navbar } from './components/Navbar';
+import { useState } from 'react';
+import { Navbar, NavView } from './components/Navbar';
 import { NGODashboard } from './pages/NGODashboard';
 import { NGOManagementPage } from './pages/NGOManagementPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { DonationsPage } from './pages/DonationsPage';
 import { ExpensesPage } from './pages/ExpensesPage';
+import { AuditLogsPage } from './pages/AuditLogsPage';
+import { ReceiptVerificationPage } from './pages/ReceiptVerificationPage';
 
 export function App() {
-  const [currentView, setCurrentView] = useState<'dashboard' | 'directory' | 'projects' | 'donations' | 'expenses'>('dashboard');
+  const [currentView, setCurrentView] = useState<NavView>('dashboard');
   const [selectedNgoId, setSelectedNgoId] = useState<number>(1);
 
   return (
@@ -40,6 +42,12 @@ export function App() {
         )}
         {currentView === 'expenses' && (
           <ExpensesPage />
+        )}
+        {currentView === 'audits' && (
+          <AuditLogsPage />
+        )}
+        {currentView === 'receipts' && (
+          <ReceiptVerificationPage />
         )}
       </main>
     </div>

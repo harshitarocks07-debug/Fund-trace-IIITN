@@ -1,8 +1,10 @@
 import React from 'react';
 
+export type NavView = 'dashboard' | 'directory' | 'projects' | 'donations' | 'expenses' | 'audits' | 'receipts';
+
 interface NavbarProps {
-  currentView: 'dashboard' | 'directory' | 'projects' | 'donations' | 'expenses';
-  onNavigate: (view: 'dashboard' | 'directory' | 'projects' | 'donations' | 'expenses') => void;
+  currentView: NavView;
+  onNavigate: (view: NavView) => void;
   ngoName?: string;
 }
 
@@ -20,16 +22,17 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, ngoName
     >
       <div
         style={{
-          maxWidth: '1400px',
+          maxWidth: '1440px',
           margin: '0 auto',
           height: '68px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: '12px',
         }}
       >
         {/* Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }} onClick={() => onNavigate('dashboard')}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', flexShrink: 0 }} onClick={() => onNavigate('dashboard')}>
           <div
             style={{
               width: '40px',
@@ -56,115 +59,164 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, ngoName
         </div>
 
         {/* Navigation Tabs */}
-        <nav style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <nav style={{ display: 'flex', alignItems: 'center', gap: '4px', overflowX: 'auto', padding: '4px 0' }}>
           <button
             onClick={() => onNavigate('dashboard')}
             style={{
-              padding: '8px 16px',
+              padding: '8px 12px',
               borderRadius: '8px',
               border: 'none',
               cursor: 'pointer',
-              fontSize: '14px',
+              fontSize: '13px',
               fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: '6px',
               transition: 'all 0.15s ease',
               backgroundColor: currentView === 'dashboard' ? '#1e293b' : 'transparent',
               color: currentView === 'dashboard' ? '#38bdf8' : '#94a3b8',
               borderBottom: currentView === 'dashboard' ? '2px solid #38bdf8' : '2px solid transparent',
+              whiteSpace: 'nowrap',
             }}
           >
-            <span>🏛️</span> NGO Profile & Dashboard
+            <span>🏛️</span> NGO Profile
           </button>
 
           <button
             onClick={() => onNavigate('directory')}
             style={{
-              padding: '8px 16px',
+              padding: '8px 12px',
               borderRadius: '8px',
               border: 'none',
               cursor: 'pointer',
-              fontSize: '14px',
+              fontSize: '13px',
               fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: '6px',
               transition: 'all 0.15s ease',
               backgroundColor: currentView === 'directory' ? '#1e293b' : 'transparent',
               color: currentView === 'directory' ? '#38bdf8' : '#94a3b8',
               borderBottom: currentView === 'directory' ? '2px solid #38bdf8' : '2px solid transparent',
+              whiteSpace: 'nowrap',
             }}
           >
-            <span>📋</span> NGO Directory & Verification
+            <span>📋</span> Directory
           </button>
 
           <button
             onClick={() => onNavigate('projects')}
             style={{
-              padding: '8px 16px',
+              padding: '8px 12px',
               borderRadius: '8px',
               border: 'none',
               cursor: 'pointer',
-              fontSize: '14px',
+              fontSize: '13px',
               fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: '6px',
               transition: 'all 0.15s ease',
               backgroundColor: currentView === 'projects' ? '#1e293b' : 'transparent',
               color: currentView === 'projects' ? '#38bdf8' : '#94a3b8',
               borderBottom: currentView === 'projects' ? '2px solid #38bdf8' : '2px solid transparent',
+              whiteSpace: 'nowrap',
             }}
           >
-            <span>🚀</span> Projects & Budgets
+            <span>🚀</span> Projects
           </button>
 
           <button
             onClick={() => onNavigate('donations')}
             style={{
-              padding: '8px 16px',
+              padding: '8px 12px',
               borderRadius: '8px',
               border: 'none',
               cursor: 'pointer',
-              fontSize: '14px',
+              fontSize: '13px',
               fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: '6px',
               transition: 'all 0.15s ease',
               backgroundColor: currentView === 'donations' ? '#1e293b' : 'transparent',
               color: currentView === 'donations' ? '#38bdf8' : '#94a3b8',
               borderBottom: currentView === 'donations' ? '2px solid #38bdf8' : '2px solid transparent',
+              whiteSpace: 'nowrap',
             }}
           >
-            <span>💝</span> Donations & Ledger
+            <span>💝</span> Donations
           </button>
 
           <button
             onClick={() => onNavigate('expenses')}
             style={{
-              padding: '8px 16px',
+              padding: '8px 12px',
               borderRadius: '8px',
               border: 'none',
               cursor: 'pointer',
-              fontSize: '14px',
+              fontSize: '13px',
               fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: '6px',
               transition: 'all 0.15s ease',
               backgroundColor: currentView === 'expenses' ? '#1e293b' : 'transparent',
               color: currentView === 'expenses' ? '#38bdf8' : '#94a3b8',
               borderBottom: currentView === 'expenses' ? '2px solid #38bdf8' : '2px solid transparent',
+              whiteSpace: 'nowrap',
             }}
           >
-            <span>💸</span> Expenses & Audit
+            <span>💸</span> Expenses
+          </button>
+
+          <button
+            onClick={() => onNavigate('audits')}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
+              backgroundColor: currentView === 'audits' ? '#1e293b' : 'transparent',
+              color: currentView === 'audits' ? '#38bdf8' : '#94a3b8',
+              borderBottom: currentView === 'audits' ? '2px solid #38bdf8' : '2px solid transparent',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span>🛡️</span> Audit Logs
+          </button>
+
+          <button
+            onClick={() => onNavigate('receipts')}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
+              backgroundColor: currentView === 'receipts' ? '#1e293b' : 'transparent',
+              color: currentView === 'receipts' ? '#38bdf8' : '#94a3b8',
+              borderBottom: currentView === 'receipts' ? '2px solid #38bdf8' : '2px solid transparent',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span>📄</span> Receipt OCR
           </button>
         </nav>
 
         {/* User / Org context */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
           <div
             style={{
               display: 'flex',
