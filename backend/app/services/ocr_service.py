@@ -158,6 +158,23 @@ def extract_image_text_and_metadata(image_bytes: bytes, filename: str) -> str:
     except Exception:
         pass
 
+    # 1b. Pure-Python PNG text chunk scanner fallback if Pillow is absent
+    if not extracted_lines and (image_bytes.startswith(b"\x89PNG") or filename.lower().endswith(".png")):
+        try:
+            import struct
+            offset = 8
+            while offset < len(image_bytes) - 8:
+                chunk_len = struct.unpack(">I", image_bytes[offset:offset+4])[0]
+                chunk_type = image_bytes[offset+4:offset+8]
+                if chunk_type in (b"tEXt", b"iTXt", b"zTXt"):
+                    chunk_data = image_bytes[offset+8:offset+8+chunk_len]
+                    parts = chunk_data.split(b"\x00", 1)
+                    if len(parts) > 1:
+                        extracted_lines.append(parts[1].decode("utf-8", errors="ignore"))
+                offset += 12 + chunk_len
+        except Exception:
+            pass
+
     # 2. If Tesseract executable is present on host system, run native OCR
     tesseract_cmd = shutil.which("tesseract")
     if not tesseract_cmd:

@@ -1,23 +1,66 @@
 import React from 'react';
+import type { LucideIcon } from 'lucide-react';
 
-interface StatCardProps {
-  title: string;
+export interface StatCardProps {
+  // Classic props from custom dashboard pages
+  title?: string;
   value: string | number;
   subtitle?: string;
-  icon?: string;
   trend?: string;
-  color?: 'emerald' | 'blue' | 'indigo' | 'amber' | 'purple';
+  color?: 'emerald' | 'blue' | 'indigo' | 'amber' | 'purple' | string;
+
+  // Origin/main props from App.tsx
+  label?: string;
+  note?: string;
+  icon?: LucideIcon | string | React.ReactNode;
+  tone?: 'green' | 'amber' | 'blue' | 'rose' | string;
 }
 
 export const StatCard: React.FC<StatCardProps> = ({
   title,
+  label,
   value,
   subtitle,
+  note,
   icon,
   trend,
-  color = 'blue',
+  color,
+  tone,
 }) => {
-  const colorMap = {
+  const displayLabel = title || label || '';
+  const displaySub = subtitle || note;
+
+  const renderIcon = (size = 19) => {
+    if (!icon) return null;
+    if (typeof icon === 'function') {
+      const Component = icon as LucideIcon;
+      return <Component size={size} />;
+    }
+    if (React.isValidElement(icon)) {
+      return icon;
+    }
+    return <span>{String(icon)}</span>;
+  };
+
+  // If used in App.tsx with tone or label styling (class 'stat-card' in CSS)
+  if (label || tone || typeof icon === 'function') {
+    const toneVal = tone || (color === 'emerald' ? 'green' : color === 'purple' ? 'rose' : color) || 'green';
+    return (
+      <article className="stat-card">
+        <div className={`stat-icon stat-icon-${toneVal}`}>
+          {renderIcon(19)}
+        </div>
+        <div className="stat-copy">
+          <p className="eyebrow">{displayLabel}</p>
+          <strong>{value}</strong>
+          {displaySub && <span>{displaySub}</span>}
+        </div>
+      </article>
+    );
+  }
+
+  // Dashboard pages style
+  const colorMap: Record<string, { bg: string; text: string; border: string }> = {
     emerald: {
       bg: 'rgba(16, 185, 129, 0.1)',
       text: '#10b981',
@@ -45,7 +88,8 @@ export const StatCard: React.FC<StatCardProps> = ({
     },
   };
 
-  const scheme = colorMap[color] || colorMap.blue;
+  const activeColor = (color as string) || 'blue';
+  const scheme = colorMap[activeColor] || colorMap.blue;
 
   return (
     <div
@@ -64,7 +108,7 @@ export const StatCard: React.FC<StatCardProps> = ({
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
         <span style={{ fontSize: '13px', fontWeight: 500, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          {title}
+          {displayLabel}
         </span>
         {icon && (
           <div
@@ -80,7 +124,7 @@ export const StatCard: React.FC<StatCardProps> = ({
               fontSize: '18px',
             }}
           >
-            {icon}
+            {renderIcon(18)}
           </div>
         )}
       </div>
@@ -89,14 +133,14 @@ export const StatCard: React.FC<StatCardProps> = ({
         <div style={{ fontSize: '26px', fontWeight: 700, color: '#f8fafc', letterSpacing: '-0.02em', marginBottom: '4px' }}>
           {value}
         </div>
-        {(subtitle || trend) && (
+        {(displaySub || trend) && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#94a3b8' }}>
             {trend && (
               <span style={{ color: scheme.text, fontWeight: 600 }}>
                 {trend}
               </span>
             )}
-            {subtitle && <span>{subtitle}</span>}
+            {displaySub && <span>{displaySub}</span>}
           </div>
         )}
       </div>

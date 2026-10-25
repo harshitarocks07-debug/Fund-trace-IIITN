@@ -21,7 +21,7 @@ class DonationBase(BaseModel):
         if isinstance(data, dict):
             if "projectId" in data and not data.get("project_id"):
                 data["project_id"] = data["projectId"]
-            elif "project_id" in data and not data.get("projectId"):
+            elif "project_id" in data and data.get("project_id") is not None and not data.get("projectId"):
                 data["projectId"] = str(data["project_id"])
         return data
 
@@ -32,7 +32,7 @@ class DonationBase(BaseModel):
         allowed = {"UPI", "CARD", "BANK_TRANSFER", "CRYPTO", "CHEQUE"}
         upper_v = v.upper().strip()
         if upper_v not in allowed:
-            return "UPI"
+            raise ValueError(f"Invalid payment method: '{v}'. Permitted values: {', '.join(sorted(allowed))}")
         return upper_v
 
 

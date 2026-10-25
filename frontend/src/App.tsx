@@ -193,11 +193,14 @@ export default function App() {
     }
   }
 
-  function handleLoginSuccess(user: AuthUser) {
-    setCurrentUser(user);
-    setRole(user.role);
+  function handleLoginSuccess(user?: AuthUser) {
+    const activeUser = user || authService.getCurrentUser();
+    if (activeUser) {
+      setCurrentUser(activeUser);
+      setRole(activeUser.role);
+      setToast(`Authenticated as ${activeUser.full_name} (${activeUser.role}). Permissions active.`);
+    }
     setAuthModalOpen(false);
-    setToast(`Authenticated as ${user.full_name} (${user.role}). Permissions active.`);
   }
 
   function handleLogout() {

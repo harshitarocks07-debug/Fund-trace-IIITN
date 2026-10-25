@@ -11,7 +11,11 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from PIL import Image, PngImagePlugin
+try:
+    from PIL import Image, PngImagePlugin
+except ImportError:
+    Image = None
+    PngImagePlugin = None
 
 from app.core.config import settings
 from app.db.base import Base
@@ -162,12 +166,24 @@ def create_sample_png_receipt(
     amount_str: str = "1,60,000.00"
 ) -> bytes:
     """Helper to generate a valid PNG image containing embedded receipt metadata."""
-    img = Image.new("RGB", (200, 100), color=(255, 255, 255))
-    info = PngImagePlugin.PngInfo()
-    info.add_text("ReceiptData", f"TAX INVOICE\nVendor: {vendor}\nInvoice No: {invoice_no}\nDate: {date_str}\nTotal Amount: INR {amount_str}")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG", pnginfo=info)
-    return buf.getvalue()
+    if Image is not None and PngImagePlugin is not None:
+        img = Image.new("RGB", (200, 100), color=(255, 255, 255))
+        info = PngImagePlugin.PngInfo()
+        info.add_text("ReceiptData", f"TAX INVOICE\nVendor: {vendor}\nInvoice No: {invoice_no}\nDate: {date_str}\nTotal Amount: INR {amount_str}")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", pnginfo=info)
+        return buf.getvalue()
+    else:
+        import struct
+        text_data = f"TAX INVOICE\nVendor: {vendor}\nInvoice No: {invoice_no}\nDate: {date_str}\nTotal Amount: INR {amount_str}".encode("latin1")
+        chunk_data = b"ReceiptData\0" + text_data
+        t_chunk = struct.pack(">I", len(chunk_data)) + b"tEXt" + chunk_data + struct.pack(">I", zlib.crc32(b"tEXt" + chunk_data) & 0xffffffff)
+        ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0)
+        ihdr_chunk = struct.pack(">I", len(ihdr)) + b"IHDR" + ihdr + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr) & 0xffffffff)
+        comp = zlib.compress(b"\x00\xff")
+        idat = struct.pack(">I", len(comp)) + b"IDAT" + comp + struct.pack(">I", zlib.crc32(b"IDAT" + comp) & 0xffffffff)
+        iend = struct.pack(">I", 0) + b"IEND" + struct.pack(">I", zlib.crc32(b"IEND") & 0xffffffff)
+        return b"\x89PNG\r\n\x1a\n" + ihdr_chunk + t_chunk + idat + iend
 
 # ================= Unit Tests for OCR Engine =================
 

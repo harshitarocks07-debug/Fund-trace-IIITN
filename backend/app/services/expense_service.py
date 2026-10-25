@@ -267,6 +267,10 @@ def update_expense(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Project ID {val} invalid or does not belong to NGO {expense.ngo_id}.",
                 )
+        if field == "vendor_name" and val:
+            setattr(expense, "vendor", val)
+        if field == "vendor" and val:
+            setattr(expense, "vendor_name", val)
         setattr(expense, field, val)
 
     # If amount modified on an approved expense, adjust project and NGO balances

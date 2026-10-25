@@ -193,7 +193,7 @@ def save_uploaded_receipt(
         mime_type=canonical_mime,
         sha256_hash=sha256_hash,
         expense_id=expense_id,
-        uploaded_by_id=uploaded_by.id,
+        uploaded_by_id=uploaded_by.id if (uploaded_by and hasattr(uploaded_by, "id")) else None,
         extracted_vendor=ocr_result.vendor if ocr_result else None,
         extracted_invoice_number=ocr_result.invoiceNumber if ocr_result else None,
         extracted_date=ocr_result.date if ocr_result else None,

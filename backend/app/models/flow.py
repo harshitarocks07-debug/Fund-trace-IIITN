@@ -54,3 +54,9 @@ class FlowHop(Base):
     def __repr__(self):
         return f"<FlowHop #{self.hop_number} type='{self.hop_type}' tx='{self.tx_hash[:12]}...'>"
 
+# Backward compatibility aliases
+FlowNode = FinancialFlow
+FlowAllocation = FlowHop
+FlowDisbursement = FlowHop
+FlowRefund = FlowHop
+

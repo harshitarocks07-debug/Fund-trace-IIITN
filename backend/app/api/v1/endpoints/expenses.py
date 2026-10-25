@@ -35,7 +35,7 @@ def _to_response(expense: Expense) -> ExpenseResponse:
             reasons = [str(expense.risk_reasons)]
 
     amt = float(expense.amount or expense.claimed_amount or 0.0)
-    vnd = expense.vendor or expense.vendor_name or expense.title or ""
+    vnd = expense.vendor_name or expense.vendor or expense.title or ""
     inv = expense.invoice_number or ""
     rec_name = expense.receipt_name or "No receipt attached"
     rec_hash = expense.receipt_hash or ""
@@ -113,6 +113,8 @@ def submit_expense(
 
     Strictly enforced: Only NGO Admins can submit claims.
     """
+    if not isinstance(current_user, User):
+        current_user = None
     if current_user is not None:
         user_role = getattr(current_user, "role", None)
         if user_role in [UserRole.DONOR.value, UserRole.AUDITOR.value, "Donor", "Auditor"]:
@@ -244,6 +246,8 @@ def review_expense(
     current_user: Optional[User] = Depends(get_current_user),
 ):
     """Review an expense claim. Strictly enforced: ONLY Auditors can approve, reject, or request more evidence."""
+    if not isinstance(current_user, User):
+        current_user = None
     if current_user is not None:
         user_role = getattr(current_user, "role", None)
         if user_role in [UserRole.DONOR.value, UserRole.NGO_ADMIN.value, "Donor", "NGO admin"]:

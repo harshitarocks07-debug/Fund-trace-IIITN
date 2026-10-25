@@ -69,7 +69,7 @@ class NGO(Base):
 
     # Relationships
     user = relationship("User", back_populates="ngo_profile")
-    projects = relationship("Project", back_populates="ngo", cascade="all, delete-orphan")
+    projects = relationship("Project", back_populates="ngo_rel", cascade="all, delete-orphan")
     donations = relationship("Donation", back_populates="ngo", cascade="all, delete-orphan")
     expenses = relationship("Expense", back_populates="ngo", cascade="all, delete-orphan")
 

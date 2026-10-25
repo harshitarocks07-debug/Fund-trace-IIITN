@@ -72,9 +72,19 @@ class ExpenseBase(BaseModel):
                 data["receiptHash"] = rh
         return data
 
+    @field_validator("payment_mode")
+    def validate_payment_mode(cls, v: str) -> str:
+        if not v:
+            return "BANK_TRANSFER"
+        allowed = {"BANK_TRANSFER", "UPI", "CARD", "CHEQUE", "CASH"}
+        upper_v = v.upper().strip()
+        if upper_v not in allowed:
+            raise ValueError(f"Invalid payment mode: '{v}'. Must be one of {', '.join(sorted(allowed))}")
+        return upper_v
+
 
 class ExpenseCreate(ExpenseBase):
-    status: str = Field("PENDING", description="Initial lifecycle status")
+    status: str = Field("Pending review", description="Initial lifecycle status")
     extractedAmount: Optional[float] = None
     extractedVendor: Optional[str] = None
     extractedInvoiceNumber: Optional[str] = None
@@ -82,9 +92,9 @@ class ExpenseCreate(ExpenseBase):
 
     @model_validator(mode="after")
     def validate_create_fields(self):
-        if not self.amount and not self.claimed_amount and not self.claimedAmount:
-            raise ValueError("Expense amount must be specified and greater than zero.")
         amt = self.amount or self.claimed_amount or self.claimedAmount or 0.0
+        if amt <= 0:
+            raise ValueError("Expense amount must be specified and greater than zero.")
         self.amount = amt
         self.claimed_amount = amt
         self.claimedAmount = amt

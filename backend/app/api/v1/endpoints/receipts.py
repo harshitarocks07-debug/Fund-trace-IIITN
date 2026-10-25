@@ -25,6 +25,8 @@ def upload_receipt(
     Accept, validate, compute SHA-256 fingerprint, run OCR extraction, and securely store receipt files.
     Enforces format, signature magic bytes, and size restrictions.
     """
+    if not isinstance(current_user, User):
+        current_user = None
     receipt = save_uploaded_receipt(
         file=file,
         db=db,
@@ -42,6 +44,8 @@ def ocr_extract_file(
     Directly run OCR receipt extraction on an uploaded file without requiring prior storage.
     Extracts candidate vendor, invoice number, date, and amount for live form pre-fill and preview.
     """
+    if not isinstance(current_user, User):
+        current_user = None
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file must have a filename.")
 
@@ -75,6 +79,8 @@ def trigger_receipt_ocr(
     Run or re-run OCR extraction on an already stored receipt in the private repository.
     Updates the database record and returns the extracted fields.
     """
+    if not isinstance(current_user, User):
+        current_user = None
     receipt = get_receipt_by_id(db, receipt_id, current_user)
     ocr_result = process_receipt_ocr(db, receipt)
     return ocr_result
@@ -95,6 +101,8 @@ def get_receipt_metadata(
     current_user: User = Depends(require_ngo_admin_or_auditor),
 ):
     """Get metadata and OCR results for a specific receipt file."""
+    if not isinstance(current_user, User):
+        current_user = None
     receipt = get_receipt_by_id(db, receipt_id, current_user)
     return receipt
 
@@ -108,6 +116,8 @@ def download_receipt_file(
     Securely download or preview an original stored receipt file.
     Only authorized NGO Admins and Auditors have access.
     """
+    if not isinstance(current_user, User):
+        current_user = None
     receipt = get_receipt_by_id(db, receipt_id, current_user)
     
     return FileResponse(

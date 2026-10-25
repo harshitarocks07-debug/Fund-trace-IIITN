@@ -15,7 +15,7 @@ class Project(Base):
 
     title = Column(String(255), nullable=False, index=True)
     name = Column(String(255), nullable=True)
-    ngo_name_str = Column("ngo", String(255), nullable=True)
+    ngo = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
     category = Column(String(100), nullable=False, default="Education", index=True)
 
@@ -47,7 +47,7 @@ class Project(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    ngo = relationship("NGO", back_populates="projects", foreign_keys=[ngo_id])
+    ngo_rel = relationship("NGO", back_populates="projects", foreign_keys=[ngo_id])
     donations = relationship("Donation", back_populates="project")
     expenses = relationship("Expense", back_populates="project")
 
@@ -57,6 +57,15 @@ class Project(Base):
             kwargs["id"] = f"PRJ-{uuid.uuid4().hex[:6].upper()}"
         else:
             kwargs["id"] = str(kwargs["id"])
+
+        # Handle ngo argument if an NGO object was provided instead of a string
+        if "ngo" in kwargs:
+            val = kwargs.pop("ngo")
+            if isinstance(val, str):
+                kwargs["ngo"] = val
+            elif val is not None:
+                kwargs["ngo_rel"] = val
+                kwargs["ngo"] = getattr(val, "name", "Helping Hands Foundation")
 
         # Sync title and name
         if "title" in kwargs and ("name" not in kwargs or not kwargs["name"]):

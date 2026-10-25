@@ -28,7 +28,11 @@ def compute_project_metrics(project: Project) -> dict:
         utilization_pct = round((project.utilized_amount / raised) * 100, 2)
 
     remaining = max(0.0, round(target - raised, 2))
-    ngo_name = project.ngo.name if getattr(project, "ngo", None) and hasattr(project.ngo, "name") else (project.ngo or "Helping Hands Foundation")
+    ngo_name = (
+        project.ngo_rel.name
+        if getattr(project, "ngo_rel", None) and hasattr(project.ngo_rel, "name")
+        else (project.ngo if isinstance(project.ngo, str) else "Helping Hands Foundation")
+    )
 
     return {
         "funding_progress_pct": min(100.0, funding_pct),
@@ -45,7 +49,7 @@ def to_project_response(project: Project) -> ProjectResponse:
         ngo_id=project.ngo_id,
         title=project.title or project.name or "",
         name=project.name or project.title or "",
-        ngo=project.ngo or metrics["ngo_name"] or "Helping Hands Foundation",
+        ngo=project.ngo if isinstance(project.ngo, str) else (metrics["ngo_name"] or "Helping Hands Foundation"),
         budget=project.budget or project.target_budget or 0.0,
         raised=project.raised or project.raised_amount or 0.0,
         description=project.description,
@@ -97,13 +101,16 @@ def create_project(db: Session, project_in: ProjectCreate, current_user: Optiona
 
     project_data = project_in.model_dump(exclude_unset=True)
     project_data["id"] = project_id
-    if ngo and "ngo_id" not in project_data:
-        project_data["ngo_id"] = ngo.id
+    if ngo:
+        if "ngo_id" not in project_data:
+            project_data["ngo_id"] = ngo.id
+        if not project_data.get("ngo"):
+            project_data["ngo"] = ngo.name
 
-    if current_user:
+    if current_user and hasattr(current_user, "id"):
         project_data["created_by_id"] = current_user.id
         if not project_data.get("ngo"):
-            project_data["ngo"] = getattr(current_user, "organization", None) or current_user.full_name
+            project_data["ngo"] = getattr(current_user, "organization", None) or getattr(current_user, "full_name", None)
 
     project = Project(**project_data)
 
@@ -198,11 +205,12 @@ def update_project_status(db: Session, project_id: Union[str, int], status_in: P
         project.beneficiaries_reached = status_in.beneficiaries_reached
 
     # Manage NGO active projects counter
-    if project.ngo:
+    target_ngo = project.ngo_rel or (db.query(NGO).filter(NGO.id == project.ngo_id).first() if project.ngo_id else None)
+    if target_ngo:
         if prev_status != "ACTIVE" and next_status == "ACTIVE":
-            project.ngo.active_projects_count = (project.ngo.active_projects_count or 0) + 1
+            target_ngo.active_projects_count = (target_ngo.active_projects_count or 0) + 1
         elif prev_status == "ACTIVE" and next_status != "ACTIVE":
-            project.ngo.active_projects_count = max(0, (project.ngo.active_projects_count or 1) - 1)
+            target_ngo.active_projects_count = max(0, (target_ngo.active_projects_count or 1) - 1)
 
     project.updated_at = datetime.utcnow()
     db.commit()
@@ -218,8 +226,9 @@ def delete_project(db: Session, project_id: Union[str, int]) -> bool:
             detail=f"Project with ID {project_id} not found."
         )
 
-    if project.ngo and project.status.upper() == "ACTIVE":
-        project.ngo.active_projects_count = max(0, (project.ngo.active_projects_count or 1) - 1)
+    target_ngo = project.ngo_rel or (db.query(NGO).filter(NGO.id == project.ngo_id).first() if project.ngo_id else None)
+    if target_ngo and project.status.upper() == "ACTIVE":
+        target_ngo.active_projects_count = max(0, (target_ngo.active_projects_count or 1) - 1)
 
     project.is_active = False
     project.updated_at = datetime.utcnow()
