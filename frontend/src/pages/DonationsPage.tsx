@@ -1,14 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { donationService } from '../services/donationService';
-import type { Donation, DonationCommitmentVerifyResponse } from '../types';
+import type { Donation, DonationCommitmentVerifyResponse, Role } from '../types';
 import { ShieldCheck, Lock, RefreshCw, CheckCircle2, HandCoins } from 'lucide-react';
 
-export const DonationsPage: React.FC = () => {
+export interface DonationsPageProps {
+  role?: Role;
+}
+
+export const DonationsPage: React.FC<DonationsPageProps> = ({ role }) => {
   const [donations, setDonations] = useState<Donation[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedDonation, setSelectedDonation] = useState<Donation | null>(null);
   const [verificationResult, setVerificationResult] = useState<DonationCommitmentVerifyResponse | null>(null);
   const [verifying, setVerifying] = useState<boolean>(false);
+
+  const activeRole: Role = role || (localStorage.getItem("fundtrace-demo-role-v1") as Role) || "Auditor";
+  const isAuditor = activeRole === "Auditor";
 
   useEffect(() => {
     async function load() {
@@ -53,10 +60,19 @@ export const DonationsPage: React.FC = () => {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#eff6ff', color: '#1e40af', padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 600 }}>
             <Lock size={14} /> Keccak-256 Salted Commitments
           </span>
+          {isAuditor && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#fdf4ff', color: '#86198f', padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 600 }}>
+              <ShieldCheck size={14} /> Auditor Privacy Shield Active: Donor Names Hidden
+            </span>
+          )}
         </div>
-        <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 700 }}>Zero-PII Donation Commitments</h1>
+        <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 700 }}>
+          {isAuditor ? "Auditor Verification: Zero-PII Donation Commitments" : "Zero-PII Donation Commitments"}
+        </h1>
         <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: '14px' }}>
-          Cryptographic commitments protect donor privacy on Ethereum. Identities remain strictly off-chain.
+          {isAuditor
+            ? "Auditor Privacy Enforced: Donor names, emails, and phone numbers are strictly concealed. Only cryptographic commitment hashes and project aggregates are visible."
+            : "Cryptographic commitments protect donor privacy on Ethereum. Identities remain strictly off-chain."}
         </p>
       </div>
 
@@ -76,7 +92,7 @@ export const DonationsPage: React.FC = () => {
             <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
               <tr>
                 <th style={{ padding: '12px 16px' }}>REFERENCE</th>
-                <th style={{ padding: '12px 16px' }}>DONOR</th>
+                <th style={{ padding: '12px 16px' }}>{isAuditor ? 'DONOR (SHIELDED HASH)' : 'DONOR'}</th>
                 <th style={{ padding: '12px 16px' }}>PROJECT</th>
                 <th style={{ padding: '12px 16px' }}>AMOUNT</th>
                 <th style={{ padding: '12px 16px' }}>COMMITMENT</th>
@@ -89,8 +105,24 @@ export const DonationsPage: React.FC = () => {
                 <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={{ padding: '12px 16px', fontWeight: 600 }}>{d.id}</td>
                   <td style={{ padding: '12px 16px', color: '#065f46' }}>
-                    <ShieldCheck size={12} style={{ display: 'inline', marginRight: 4 }} />
-                    {d.donor}
+                    {isAuditor ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <code style={{ fontFamily: 'monospace', fontSize: '11px', background: '#f0f9ff', border: '1px solid #bae6fd', color: '#0284c7', padding: '2px 6px', borderRadius: '4px' }} title={d.commitmentHash || (d.donor.startsWith('0x') ? d.donor : `0x${d.reference || d.id}`)}>
+                          <Lock size={10} style={{ marginRight: 3, display: 'inline' }} />
+                          {d.commitmentHash
+                            ? `${d.commitmentHash.slice(0, 10)}...${d.commitmentHash.slice(-8)}`
+                            : (d.donor.startsWith('0x') ? `${d.donor.slice(0, 10)}...${d.donor.slice(-8)}` : `0x${d.reference || d.id}`)}
+                        </code>
+                        <span style={{ fontSize: '10px', color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                          <ShieldCheck size={11} /> Cryptographic Hash • Zero PII
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <ShieldCheck size={12} style={{ display: 'inline', marginRight: 4 }} />
+                        {d.donor.startsWith('0x') ? `${d.donor.slice(0, 10)}...` : d.donor}
+                      </>
+                    )}
                   </td>
                   <td style={{ padding: '12px 16px' }}>{d.projectId}</td>
                   <td style={{ padding: '12px 16px', fontWeight: 600 }}>₹{d.amount.toLocaleString()}</td>

@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime
 from typing import List, Optional
 import time
@@ -56,11 +57,33 @@ def list_donations(
             )
             db.commit()
 
+    def _format_donor(d: Donation) -> str:
+        if current_user.role == UserRole.AUDITOR.value:
+            # Auditor privacy policy: The auditor MUST NOT see the donor's name.
+            # Only the cryptographic commitment hash is visible.
+            return d.commitment_hash or ("0x" + hashlib.sha256(f"{d.id}:{d.project_id}:{d.reference}".encode()).hexdigest())
+        elif current_user.role == UserRole.DONOR.value:
+            if d.donor_id == current_user.id or d.donor_name == current_user.full_name:
+                return d.donor_name
+            return "Shielded Donor"
+        else:
+            return d.donor_name
+
+    def _format_salt(d: Donation) -> Optional[str]:
+        if current_user.role == UserRole.AUDITOR.value:
+            return None
+        elif current_user.role == UserRole.DONOR.value:
+            if d.donor_id == current_user.id or d.donor_name == current_user.full_name:
+                return d.blinding_salt
+            return None
+        else:
+            return d.blinding_salt
+
     return [
         DonationOut(
             id=d.id,
             projectId=d.project_id,
-            donor=d.donor_name if (current_user.role != UserRole.DONOR.value or d.donor_id == current_user.id) else "Shielded Donor",
+            donor=_format_donor(d),
             amount=d.amount,
             date=d.date,
             reference=d.reference,
@@ -72,7 +95,7 @@ def list_donations(
             commitmentHash=d.commitment_hash,
             blockchainTxHash=d.blockchain_tx_hash,
             blockchainBlockNumber=d.blockchain_block_number,
-            blindingSalt=d.blinding_salt if (current_user.role != UserRole.DONOR.value or d.donor_id == current_user.id) else None,
+            blindingSalt=_format_salt(d),
         )
         for d in donations
     ]
@@ -142,10 +165,17 @@ def record_donation(
         # Graceful fallback handled inside service
         pass
 
+    donor_field = (
+        donation.commitment_hash 
+        if current_user.role == UserRole.AUDITOR.value 
+        else donation.donor_name
+    )
+    salt_field = None if current_user.role == UserRole.AUDITOR.value else donation.blinding_salt
+
     return DonationOut(
         id=donation.id,
         projectId=donation.project_id,
-        donor=donation.donor_name,
+        donor=donor_field,
         amount=donation.amount,
         date=donation.date,
         reference=donation.reference,
@@ -157,7 +187,7 @@ def record_donation(
         commitmentHash=donation.commitment_hash,
         blockchainTxHash=donation.blockchain_tx_hash,
         blockchainBlockNumber=donation.blockchain_block_number,
-        blindingSalt=donation.blinding_salt,
+        blindingSalt=salt_field,
     )
 
 @router.post("/{donation_id}/anchor", response_model=DonationOut)
@@ -176,10 +206,17 @@ def anchor_donation_endpoint(
     
     anchor_donation_commitment_on_chain(db, donation)
 
+    donor_field = (
+        donation.commitment_hash 
+        if current_user.role == UserRole.AUDITOR.value 
+        else donation.donor_name
+    )
+    salt_field = None if current_user.role == UserRole.AUDITOR.value else donation.blinding_salt
+
     return DonationOut(
         id=donation.id,
         projectId=donation.project_id,
-        donor=donation.donor_name,
+        donor=donor_field,
         amount=donation.amount,
         date=donation.date,
         reference=donation.reference,
@@ -191,7 +228,7 @@ def anchor_donation_endpoint(
         commitmentHash=donation.commitment_hash,
         blockchainTxHash=donation.blockchain_tx_hash,
         blockchainBlockNumber=donation.blockchain_block_number,
-        blindingSalt=donation.blinding_salt,
+        blindingSalt=salt_field,
     )
 
 _VERIFICATION_ATTEMPTS = defaultdict(list)
@@ -260,14 +297,33 @@ def verify_payment_endpoint(
 # --- Legacy Compatibility Endpoints for Test Support ---
 
 @router.get("/{donation_id}", response_model=DonationOut)
-def get_donation(donation_id: str, db: Session = Depends(get_db)):
+def get_donation(
+    donation_id: str, 
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user),
+):
     d = db.query(Donation).filter(Donation.id == str(donation_id)).first()
     if not d:
         raise HTTPException(status_code=404, detail=f"Donation {donation_id} not found.")
+    
+    if current_user and current_user.role == UserRole.AUDITOR.value:
+        donor_field = d.commitment_hash or ("0x" + hashlib.sha256(f"{d.id}:{d.project_id}:{d.reference}".encode()).hexdigest())
+        salt_field = None
+    elif current_user and current_user.role == UserRole.DONOR.value:
+        if d.donor_id == current_user.id or d.donor_name == current_user.full_name:
+            donor_field = d.donor_name
+            salt_field = d.blinding_salt
+        else:
+            donor_field = "Shielded Donor"
+            salt_field = None
+    else:
+        donor_field = d.donor_name
+        salt_field = d.blinding_salt
+
     return DonationOut(
         id=d.id,
         projectId=d.project_id,
-        donor=d.donor_name,
+        donor=donor_field,
         amount=d.amount,
         date=d.date,
         reference=d.reference,
@@ -279,7 +335,7 @@ def get_donation(donation_id: str, db: Session = Depends(get_db)):
         commitmentHash=d.commitment_hash,
         blockchainTxHash=d.blockchain_tx_hash,
         blockchainBlockNumber=d.blockchain_block_number,
-        blindingSalt=d.blinding_salt,
+        blindingSalt=salt_field,
     )
 
 def get_donation_receipt(donation_id: Any, db: Session = Depends(get_db)):

@@ -869,7 +869,22 @@ function ProjectDetail({ project, donations, expenses, auditEntries, role, onClo
     <div className="detail-section-heading"><h3>{role === "Donor" ? "Approved expense summaries" : "Project expenses"}</h3><span>{visibleExpenses.length} shown</span></div>
     <div className="project-expense-list">{visibleExpenses.slice().sort((a, b) => b.date.localeCompare(a.date)).map((expense) => <button className="project-expense-row" key={expense.id} onClick={() => onOpenExpense(expense)}><span className="project-expense-icon"><WalletCards size={15} /></span><span className="project-expense-main"><b>{role === "Donor" ? expense.category : expense.vendor}</b><small>{expense.id} · {role === "Donor" ? expense.category : expense.invoiceNumber || "No invoice number"}</small></span><span className="project-expense-amount">{money(expense.claimedAmount)}<small><StatusBadge status={expense.status} /></small></span><ChevronRight size={15} /></button>)}{visibleExpenses.length === 0 && <p className="empty-cell">No expenses to show for this project.</p>}</div>
     <div className="detail-section-heading"><h3>{role === "Donor" ? "Your contributions" : "Contribution activity"}</h3><span>{visibleDonations.length} shown</span></div>
-    <div className="project-donation-list">{visibleDonations.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4).map((donation) => <div className="project-donation-row" key={donation.id}><span className="donation-row-icon"><HandCoins size={15} /></span><span><b>{role === "Donor" ? "Your contribution" : donation.donor}</b><small>{donation.id} · {donation.reference} · {dateLabel(donation.date)}</small></span><strong>{money(donation.amount)}</strong></div>)}{visibleDonations.length === 0 && <p className="empty-cell">No contribution records are visible for this project.</p>}</div>
+    <div className="project-donation-list">{visibleDonations.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4).map((donation) => {
+      const isAuditor = role === "Auditor";
+      const donorDisplay = isAuditor
+        ? (donation.commitmentHash ? `${donation.commitmentHash.slice(0, 10)}...${donation.commitmentHash.slice(-8)}` : (donation.donor.startsWith("0x") ? `${donation.donor.slice(0, 10)}...` : `0x${donation.reference || donation.id}`))
+        : (role === "Donor" ? "Your contribution" : donation.donor);
+      return (
+        <div className="project-donation-row" key={donation.id}>
+          <span className="donation-row-icon"><HandCoins size={15} /></span>
+          <span>
+            <b>{donorDisplay}</b>
+            <small>{donation.id} · {isAuditor ? "Shielded Hash • Zero PII" : donation.reference} · {dateLabel(donation.date)}</small>
+          </span>
+          <strong>{money(donation.amount)}</strong>
+        </div>
+      );
+    })}{visibleDonations.length === 0 && <p className="empty-cell">No contribution records are visible for this project.</p>}</div>
     {role !== "Donor" && <div className="project-audit-summary"><ShieldCheck size={15} /><span>{auditEntries.length} audit event{auditEntries.length === 1 ? "" : "s"} associated with this project's expenses.</span></div>}
     <div className="project-detail-footer"><span><ShieldAlert size={14} /> Enforced RBAC · Role-governed action rights</span>{role === "Donor" && <button className="button button-primary" onClick={onDonate}><HandCoins size={15} /> Record contribution</button>}</div>
   </Modal>;
@@ -1045,10 +1060,26 @@ function DonationsPage({
                     </td>
                     <td>
                       <div>
-                        <b>{role === "Donor" ? `${donation.donor} (You)` : donation.donor}</b>
-                        <small className="table-subline" style={{ color: "#059669", display: "flex", alignItems: "center", gap: 3 }}>
-                          <ShieldCheck size={11} /> Off-chain only · Zero PII on-chain
-                        </small>
+                        {role === "Auditor" ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                            <code style={{ fontFamily: "monospace", fontSize: "11px", color: "#0284c7", background: "#f0f9ff", border: "1px solid #bae6fd", padding: "2px 6px", borderRadius: "4px" }} title={donation.commitmentHash || (donation.donor.startsWith("0x") ? donation.donor : `0x${donation.reference || donation.id}`)}>
+                              <LockIcon size={10} style={{ marginRight: 3, display: "inline" }} />
+                              {donation.commitmentHash
+                                ? `${donation.commitmentHash.slice(0, 10)}...${donation.commitmentHash.slice(-8)}`
+                                : (donation.donor.startsWith("0x") ? `${donation.donor.slice(0, 10)}...${donation.donor.slice(-8)}` : `0x${donation.reference || donation.id}`)}
+                            </code>
+                            <small className="table-subline" style={{ color: "#059669", display: "flex", alignItems: "center", gap: 3 }}>
+                              <ShieldCheck size={11} /> Cryptographic Hash • Zero PII
+                            </small>
+                          </div>
+                        ) : (
+                          <div>
+                            <b>{role === "Donor" ? `${donation.donor} (You)` : donation.donor}</b>
+                            <small className="table-subline" style={{ color: "#059669", display: "flex", alignItems: "center", gap: 3 }}>
+                              <ShieldCheck size={11} /> Off-chain only · Zero PII on-chain
+                            </small>
+                          </div>
+                        )}
                       </div>
                     </td>
                     <td>

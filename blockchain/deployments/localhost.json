@@ -1,10 +1,10 @@
 {
   "contractName": "FundTraceLedger",
-  "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+  "address": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
   "network": "localhost",
   "chainId": 31337,
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-  "deploymentTransaction": "0x4004cf46f259a332ece9033bf508fd7a85462d36d2a07cd57f47c705d06c35c3",
+  "deploymentTransaction": "0xd9f412221412ed1d9135666ac82dc76cbba3977d8e12973103ad536d6ba8412a",
   "projectId": "PRJ-001",
-  "deployedAt": "2026-10-25T23:57:31.555Z"
+  "deployedAt": "2026-10-26T02:38:43.143Z"
 }

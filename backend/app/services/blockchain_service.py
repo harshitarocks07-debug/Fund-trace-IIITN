@@ -15,11 +15,28 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
-# Configuration loaded from settings / environment variables
-CONTRACT_ADDRESS: str = getattr(settings, "FUNDTRACE_CONTRACT_ADDRESS", os.getenv(
-    "FUNDTRACE_CONTRACT_ADDRESS",
-    "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
-))
+def _resolve_contract_address() -> str:
+    env_addr = getattr(settings, "FUNDTRACE_CONTRACT_ADDRESS", os.getenv("FUNDTRACE_CONTRACT_ADDRESS", "")).strip()
+    if env_addr:
+        return env_addr
+    dep_paths = [
+        Path(__file__).resolve().parents[3] / "blockchain" / "deployments" / "localhost.json",
+        Path(__file__).resolve().parents[2] / "blockchain" / "deployments" / "localhost.json",
+        Path.cwd() / "blockchain" / "deployments" / "localhost.json",
+        Path.cwd() / "FundTrace" / "blockchain" / "deployments" / "localhost.json",
+    ]
+    for p in dep_paths:
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and data.get("address"):
+                        return data["address"]
+            except Exception:
+                pass
+    return "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+
+CONTRACT_ADDRESS: str = _resolve_contract_address()
 NETWORK_NAME: str = getattr(settings, "FUNDTRACE_NETWORK_NAME", os.getenv("FUNDTRACE_NETWORK_NAME", "Hardhat Local"))
 CHAIN_ID: int = int(getattr(settings, "FUNDTRACE_CHAIN_ID", os.getenv("FUNDTRACE_CHAIN_ID", "31337")))
 RPC_URL: str = getattr(settings, "FUNDTRACE_RPC_URL", os.getenv("FUNDTRACE_RPC_URL", "http://127.0.0.1:8545"))

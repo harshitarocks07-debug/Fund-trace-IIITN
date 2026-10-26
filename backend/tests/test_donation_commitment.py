@@ -231,3 +231,47 @@ def test_anti_enumeration_rate_limiting(db_session):
     assert exc_info.value.status_code == 429
     assert "Rate limit exceeded" in exc_info.value.detail
     assert exc_info.value.headers.get("Retry-After") == "60"
+
+
+def test_auditor_sees_only_hash_for_donor_privacy(db_session):
+    from app.api.v1.endpoints.donations import record_donation, list_donations, get_donation
+    from app.schemas.donation import DonationCreate
+    
+    donor_user = db_session.query(User).filter(User.role == UserRole.DONOR.value).first()
+    auditor_user = db_session.query(User).filter(User.role == UserRole.AUDITOR.value).first()
+    
+    # 1. Record a donation under the donor's name
+    don_in = DonationCreate(
+        projectId="PRJ-001",
+        amount=75000.0,
+        donorName="Secret High-Net-Worth Supporter",
+        paymentReference="PAY-PRIVATE-99",
+    )
+    created = record_donation(don_in, db=db_session, current_user=donor_user)
+    assert created.amount == 75000.0
+    
+    # 2. When the donor lists donations, they see their own name and salt
+    donor_view = list_donations(db=db_session, current_user=donor_user)
+    assert len(donor_view) >= 1
+    my_don = [d for d in donor_view if d.id == created.id][0]
+    assert my_don.donor == "Secret High-Net-Worth Supporter"
+    assert my_don.blindingSalt is not None
+    
+    # 3. When an AUDITOR lists donations, they MUST NOT see the donor's name!
+    # The auditor must see ONLY the cryptographic commitment hash!
+    auditor_view = list_donations(db=db_session, current_user=auditor_user)
+    assert len(auditor_view) >= 1
+    auditor_don = [d for d in auditor_view if d.id == created.id][0]
+    
+    # Strictly enforce privacy invariants
+    assert "Secret High-Net-Worth Supporter" not in auditor_don.donor
+    assert auditor_don.donor == auditor_don.commitmentHash
+    assert auditor_don.donor.startswith("0x")
+    assert len(auditor_don.donor) == 66
+    assert auditor_don.blindingSalt is None
+    
+    # 4. Same strict check on single donation lookup
+    auditor_single = get_donation(donation_id=created.id, db=db_session, current_user=auditor_user)
+    assert "Secret High-Net-Worth Supporter" not in auditor_single.donor
+    assert auditor_single.donor == auditor_single.commitmentHash
+    assert auditor_single.blindingSalt is None

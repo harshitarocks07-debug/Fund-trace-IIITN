@@ -95,6 +95,8 @@ def ensure_schema_columns():
             existing_user_cols = {row[1] for row in res}
             cols_to_add_users = [
                 ("is_verified", "BOOLEAN DEFAULT 0"),
+                ("created_at", "DATETIME"),
+                ("updated_at", "DATETIME"),
             ]
             for col_name, col_type in cols_to_add_users:
                 if col_name not in existing_user_cols:
