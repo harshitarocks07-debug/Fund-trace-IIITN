@@ -34,6 +34,7 @@ import { Sidebar, type PageKey } from "./components/Sidebar";
 import { StatCard } from "./components/StatCard";
 import { StatusBadge } from "./components/StatusBadge";
 import { MultiHopFlowView } from "./components/MultiHopFlowView";
+import { PipelineFlowVisualizer } from "./components/PipelineFlowVisualizer";
 import { FundTraceWalkthrough } from "./components/FundTraceWalkthrough";
 import { LoginPage } from "./pages/LoginPage";
 import { NGODashboard } from "./pages/NGODashboard";
@@ -803,6 +804,9 @@ function Overview({ role, data, donationsTotal, approvedTotal, pending, latestEx
           ? <DonorExpenseTable expenses={latestExpenses.filter((item) => item.status === "Approved").slice(0, 4)} projects={data.projects} />
           : <ExpenseTable expenses={role === "Auditor" ? latestExpenses.filter((item) => item.status === "Pending review" || item.status === "More evidence").sort((a, b) => b.riskScore - a.riskScore).slice(0, 4) : latestExpenses.slice(0, 4)} projects={data.projects} onSelect={onSelectExpense} />}
       </section>
+      {/* 4-Stage Architectural Pipeline Visualizer Matching User Diagram */}
+      <PipelineFlowVisualizer onNavigateToFlows={() => setPage("Multi-hop flows")} />
+
       <section className="integrity-note" style={{ background: "#f0fbf5", borderColor: "#c4e7d3" }}>
         <GitFork size={17} style={{ color: "#176d4b", flexShrink: 0 }} />
         <span><b>Multi-Hop Crypto-to-Fiat Flow Tracker Active:</b> Trace complex flows (e.g., 50 ETH earmarked for &quot;Clean water infrastructure&quot; swapped on Uniswap ➔ bridged via Stargate ➔ off-ramped to INR) directly to audited vendor receipt fingerprints with zero on-chain beneficiary PII exposure.</span>

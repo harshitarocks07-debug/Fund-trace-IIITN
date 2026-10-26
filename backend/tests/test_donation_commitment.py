@@ -194,3 +194,40 @@ def test_verify_payment_separately(db_session):
     audit_entry = db_session.query(AuditLog).filter(AuditLog.action == "Donation Payment Verified").first()
     assert audit_entry is not None
     assert "BANK-WIRE-REF-998877" in audit_entry.reason
+
+
+def test_anti_enumeration_rate_limiting(db_session):
+    from starlette.requests import Request
+    from fastapi import HTTPException
+    from app.api.v1.endpoints.donations import verify_commitment_endpoint
+    from app.schemas.donation import DonationCommitmentVerifyRequest
+
+    payload = DonationCommitmentVerifyRequest(
+        donationId="DON-TEST-RATE",
+        projectId="PRJ-001",
+        amount=100.0,
+        paymentReference="REF-123",
+        blindingSalt="0x" + "00" * 32,
+    )
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/donations/verify-commitment",
+        "headers": [],
+        "client": ("203.0.113.99", 4455),
+    }
+    req = Request(scope)
+
+    # First 20 requests should be accepted
+    for _ in range(20):
+        resp = verify_commitment_endpoint(payload=payload, http_request=req, db=db_session)
+        assert resp.verified is False
+
+    # 21st request from same IP must be rejected with 429 Too Many Requests
+    with pytest.raises(HTTPException) as exc_info:
+        verify_commitment_endpoint(payload=payload, http_request=req, db=db_session)
+
+    assert exc_info.value.status_code == 429
+    assert "Rate limit exceeded" in exc_info.value.detail
+    assert exc_info.value.headers.get("Retry-After") == "60"

@@ -90,6 +90,41 @@ def ensure_schema_columns():
         except Exception:
             pass
 
+        try:
+            res = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+            existing_user_cols = {row[1] for row in res}
+            cols_to_add_users = [
+                ("is_verified", "BOOLEAN DEFAULT 0"),
+            ]
+            for col_name, col_type in cols_to_add_users:
+                if col_name not in existing_user_cols:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+        except Exception:
+            pass
+
+        try:
+            res = conn.execute(text("PRAGMA table_info(donations)")).fetchall()
+            existing_don_cols = {row[1] for row in res}
+            cols_to_add_donations = [
+                ("blockchain_status", "VARCHAR(50) DEFAULT 'Not submitted'"),
+                ("blockchain_tx_hash", "VARCHAR(100)"),
+                ("blockchain_block_number", "INTEGER"),
+                ("blockchain_anchored_at", "DATETIME"),
+                ("blinding_salt", "VARCHAR(66)"),
+                ("commitment_hash", "VARCHAR(66)"),
+                ("payment_status", "VARCHAR(50) DEFAULT 'Pending'"),
+                ("payment_tx_hash", "VARCHAR(100)"),
+                ("payment_verified_at", "DATETIME"),
+                ("payment_verified_by", "VARCHAR(255)"),
+            ]
+            for col_name, col_type in cols_to_add_donations:
+                if col_name not in existing_don_cols:
+                    conn.execute(text(f"ALTER TABLE donations ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+        except Exception:
+            pass
+
 
 def seed_database(db=None):
     """Seed initial demonstration users and records if the database is newly initialized."""

@@ -34,6 +34,7 @@ import type {
 } from "../types";
 import { flowService } from "../services/flowService";
 import { formatINR } from "../utils/demoData";
+import { PipelineFlowVisualizer } from "./PipelineFlowVisualizer";
 
 interface MultiHopFlowViewProps {
   role: Role;
@@ -53,6 +54,22 @@ export function MultiHopFlowView({ role }: MultiHopFlowViewProps) {
   const [zkLoading, setZkLoading] = useState<boolean>(false);
   const [certModal, setCertModal] = useState<ImpactCertificateOut | null>(null);
   const [certLoading, setCertLoading] = useState<boolean>(false);
+  const [activePillarStage, setActivePillarStage] = useState<number>(1);
+
+  function handlePillarStageSelect(stageId: number) {
+    setActivePillarStage(stageId);
+    if (!timelineView?.flow?.hops) return;
+    const currentHops = timelineView.flow.hops;
+    if (stageId === 1 && currentHops.length > 0) {
+      setSelectedHop(currentHops[0]);
+    } else if (stageId === 2 && currentHops.length > 1) {
+      setSelectedHop(currentHops[1]);
+    } else if (stageId === 3 && currentHops.length > 4) {
+      setSelectedHop(currentHops[4]);
+    } else if (stageId === 4) {
+      void handleOpenCertificate();
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -322,6 +339,12 @@ export function MultiHopFlowView({ role }: MultiHopFlowViewProps) {
           )}
         </div>
       )}
+
+      {/* 4-Stage Architectural Pipeline Visualizer */}
+      <PipelineFlowVisualizer 
+        activeStage={activePillarStage} 
+        onSelectStage={handlePillarStageSelect} 
+      />
 
       {/* Multi-Hop Interactive Timeline */}
       <div className="timeline-section">

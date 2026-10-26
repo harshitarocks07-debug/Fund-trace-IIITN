@@ -350,3 +350,22 @@ def verify_actual_payment_transaction(
         paymentMethod=donation.payment_method,
         message=f"Financial payment settlement verified successfully for donation {donation.id}.",
     )
+
+
+def seed_sample_donations_if_empty(db: Session) -> None:
+    """Seed initial sample donation records if table is empty with Zero-PII commitments."""
+    if db.query(Donation).count() == 0:
+        demo_donations = [
+            Donation(id="DON-1042", project_id="PRJ-001", donor_name="Aarav Mehta", amount=500000.0, date="2026-10-14", reference="PAY-8K2F19"),
+            Donation(id="DON-1041", project_id="PRJ-001", donor_name="Nisha Rao", amount=300000.0, date="2026-10-12", reference="PAY-3M7J21"),
+            Donation(id="DON-1038", project_id="PRJ-002", donor_name="Kavya Shah", amount=125000.0, date="2026-10-10", reference="PAY-9P1D04"),
+            Donation(id="DON-1032", project_id="PRJ-001", donor_name="Rohan Das", amount=200000.0, date="2026-10-08", reference="PAY-7B5L38"),
+            Donation(id="DON-1026", project_id="PRJ-003", donor_name="Mira Kapoor", amount=82500.0, date="2026-10-03", reference="PAY-2X6W14"),
+        ]
+        for d in demo_donations:
+            d.blinding_salt = generate_donation_salt()
+            d.commitment_hash = compute_donation_commitment(
+                d.id, d.project_id, d.amount, d.reference, d.blinding_salt
+            )
+        db.add_all(demo_donations)
+        db.commit()

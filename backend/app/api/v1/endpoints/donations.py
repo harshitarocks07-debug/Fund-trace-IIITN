@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import List, Optional
 import time
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from collections import defaultdict
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -193,23 +194,41 @@ def anchor_donation_endpoint(
         blindingSalt=donation.blinding_salt,
     )
 
+_VERIFICATION_ATTEMPTS = defaultdict(list)
+_MAX_VERIFICATIONS_PER_MINUTE = 20
+
+def _enforce_anti_enumeration_rate_limit(client_ip: str):
+    now = time.time()
+    valid_window = [t for t in _VERIFICATION_ATTEMPTS[client_ip] if now - t < 60]
+    if len(valid_window) >= _MAX_VERIFICATIONS_PER_MINUTE:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded: too many commitment verification attempts. Offline guessing and identity enumeration are prohibited.",
+            headers={"Retry-After": "60"}
+        )
+    valid_window.append(now)
+    _VERIFICATION_ATTEMPTS[client_ip] = valid_window
+
 @router.post("/verify-commitment", response_model=DonationCommitmentVerifyResponse)
 def verify_commitment_endpoint(
-    request: DonationCommitmentVerifyRequest,
+    payload: DonationCommitmentVerifyRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Verify a donation record commitment on-chain without exposing donor PII.
-    Allows anyone holding the receipt credentials and blinding salt to prove
-    that the donation is authentic and anchored on the blockchain.
+    Protected by anti-enumeration rate limiting to prevent brute-force preimage attacks.
     """
+    client_ip = http_request.client.host if (http_request and http_request.client) else "127.0.0.1"
+    _enforce_anti_enumeration_rate_limit(client_ip)
+
     return verify_donation_preimage_credentials(
         db=db,
-        donation_id=request.donationId,
-        project_id=request.projectId,
-        amount=request.amount,
-        payment_reference=request.paymentReference,
-        blinding_salt=request.blindingSalt,
+        donation_id=payload.donationId,
+        project_id=payload.projectId,
+        amount=payload.amount,
+        payment_reference=payload.paymentReference,
+        blinding_salt=payload.blindingSalt,
     )
 
 @router.post("/{donation_id}/verify-payment", response_model=DonationPaymentVerifyResponse)
