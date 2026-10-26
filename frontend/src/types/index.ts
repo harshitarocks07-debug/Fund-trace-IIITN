@@ -131,6 +131,12 @@ export interface Donation {
   blockchainTxHash?: string;
   blockchainBlockNumber?: number;
   blindingSalt?: string;
+  donorPan?: string;
+  donorEmail?: string;
+  ngoName?: string;
+  notes?: string;
+  receiptNumber?: string;
+  isAnonymous?: boolean;
 }
 
 export interface DonationCommitmentVerifyResponse {
