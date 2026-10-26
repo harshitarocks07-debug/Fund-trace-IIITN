@@ -89,9 +89,8 @@ def anchor_donation_commitment_on_chain(
     donation: Donation,
 ) -> Dict[str, Any]:
     """
-    Anchor a privacy-preserving donation commitment to the FundTraceLedger smart contract.
-    Submits an actual transaction calling anchorDonationCommitment() on the EVM node,
-    or falls back gracefully to deterministic anchoring if the RPC node is offline.
+    Record a blinded donation commitment on the configured EVM chain.
+    A donation is marked Confirmed only after a successful real transaction.
     """
     if not donation.commitment_hash:
         donation.blinding_salt = donation.blinding_salt or generate_donation_salt()
@@ -104,116 +103,126 @@ def anchor_donation_commitment_on_chain(
         )
         db.commit()
 
-    donation.blockchain_status = "Submitting"
-    db.commit()
-
-    now = datetime.now()
-    actual_tx_hash: Optional[str] = None
-    actual_block_number: Optional[int] = None
-    on_chain_submission = False
-
     w3 = get_web3_client()
-    if w3 is not None and w3.is_connected():
-        try:
-            account = w3.eth.account.from_key(PRIVATE_KEY)
-            contract = get_contract_instance(w3)
+    if w3 is None or not w3.is_connected():
+        donation.blockchain_status = "Failed"
+        db.commit()
+        raise RuntimeError("Blockchain RPC is unavailable; donation was not anchored.")
 
-            # Ensure project is registered in contract
-            try:
-                contract.functions.getProjectSummary(donation.project_id).call()
-            except Exception:
-                try:
-                    nonce = w3.eth.get_transaction_count(account.address)
-                    reg_tx = contract.functions.registerProject(
-                        donation.project_id,
-                        f"Project {donation.project_id}",
-                        account.address,
-                        10_000_000,
-                    ).build_transaction({
-                        "from": account.address,
-                        "nonce": nonce,
-                        "gas": 300000,
-                        "gasPrice": w3.eth.gas_price,
-                        "chainId": CHAIN_ID,
-                    })
-                    signed_reg = account.sign_transaction(reg_tx)
-                    reg_hash = w3.eth.send_raw_transaction(signed_reg.raw_transaction)
-                    w3.eth.wait_for_transaction_receipt(reg_hash, timeout=15)
-                except Exception as reg_err:
-                    logger.warning(f"Could not auto-register project {donation.project_id}: {reg_err}")
-
-            # Check if donation commitment already exists on chain
-            try:
-                existing = contract.functions.donationCommitments(donation.id).call()
-                # existing: [id, projectId, amount, commitmentHash, timestamp, blockNumber, exists]
-                is_existing = existing[6] if len(existing) > 6 else False
-            except Exception:
-                is_existing = False
-
-            if not is_existing:
-                nonce = w3.eth.get_transaction_count(account.address)
-                amount_int = int(round(donation.amount))
-                commitment_bytes = Web3.to_bytes(hexstr=donation.commitment_hash)
-
-                tx = contract.functions.anchorDonationCommitment(
-                    donation.id,
-                    donation.project_id,
-                    amount_int,
-                    commitment_bytes,
-                ).build_transaction({
-                    "from": account.address,
-                    "nonce": nonce,
-                    "gas": 350000,
-                    "gasPrice": w3.eth.gas_price,
-                    "chainId": CHAIN_ID,
-                })
-
-                signed_tx = account.sign_transaction(tx)
-                tx_hash_bytes = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-                receipt = w3.eth.wait_for_transaction_receipt(tx_hash_bytes, timeout=20)
-
-                raw_hash = receipt.transactionHash.hex()
-                actual_tx_hash = raw_hash if raw_hash.startswith("0x") else f"0x{raw_hash}"
-                actual_block_number = int(receipt.blockNumber)
-                on_chain_submission = True
-            else:
-                actual_block_number = int(existing[5])
-                actual_tx_hash = donation.blockchain_tx_hash or generate_deterministic_tx_hash(
-                    donation.id, donation.commitment_hash, actual_block_number
-                )
-                on_chain_submission = True
-
-        except Exception as on_chain_err:
-            logger.warning(f"Donation on-chain anchoring error, using deterministic fallback: {on_chain_err}")
-
-    # Fallback if offline
-    if actual_tx_hash is None or actual_block_number is None:
-        total_anchored = db.query(Donation).filter(Donation.blockchain_status == "Confirmed").count()
-        actual_block_number = 18_492_200 + total_anchored + 1
-        actual_tx_hash = generate_deterministic_tx_hash(
-            donation.id, donation.commitment_hash, actual_block_number
+    if int(w3.eth.chain_id) != CHAIN_ID:
+        donation.blockchain_status = "Failed"
+        db.commit()
+        raise RuntimeError(
+            f"Wrong blockchain network: connected chain ID {w3.eth.chain_id}, expected {CHAIN_ID}."
         )
 
-    donation.blockchain_status = "Confirmed"
-    donation.blockchain_tx_hash = actual_tx_hash
-    donation.blockchain_block_number = actual_block_number
-    donation.blockchain_anchored_at = now
+    try:
+        account = w3.eth.account.from_key(PRIVATE_KEY)
+        contract = get_contract_instance(w3)
 
-    db.commit()
-    db.refresh(donation)
+        # Check the contract's actual five-field storage layout.
+        existing = contract.functions.donationCommitments(donation.id).call()
+        if len(existing) >= 5 and bool(existing[4]):
+            existing_project = existing[1]
+            existing_hash = Web3.to_hex(existing[2]).lower()
+            if (
+                existing_project != donation.project_id
+                or existing_hash != donation.commitment_hash.lower()
+            ):
+                raise RuntimeError(
+                    "An on-chain donation ID already exists with different commitment data."
+                )
 
-    return {
-        "donationId": donation.id,
-        "projectId": donation.project_id,
-        "amount": donation.amount,
-        "commitmentHash": donation.commitment_hash,
-        "blockchainStatus": donation.blockchain_status,
-        "blockchainTxHash": donation.blockchain_tx_hash,
-        "blockchainBlockNumber": donation.blockchain_block_number,
-        "onChainSubmission": on_chain_submission,
-        "anchoredAt": donation.blockchain_anchored_at.isoformat(),
-        "message": f"Privacy-preserving donation commitment {donation.id} anchored to blockchain at block #{actual_block_number}.",
-    }
+            donation.blockchain_status = "Confirmed"
+            donation.blockchain_block_number = int(existing[3])
+            # Do not invent a transaction hash when reusing an existing record.
+            donation.blockchain_anchored_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(donation)
+            return {
+                "donationId": donation.id,
+                "projectId": donation.project_id,
+                "commitmentHash": donation.commitment_hash,
+                "blockchainStatus": donation.blockchain_status,
+                "blockchainTxHash": donation.blockchain_tx_hash,
+                "blockchainBlockNumber": donation.blockchain_block_number,
+                "onChainSubmission": True,
+                "message": "Existing on-chain donation commitment verified.",
+            }
+
+        commitment_bytes = Web3.to_bytes(hexstr=donation.commitment_hash)
+        nonce = w3.eth.get_transaction_count(account.address, "pending")
+
+        tx = contract.functions.anchorDonationCommitmentBlinded(
+            donation.id,
+            donation.project_id,
+            commitment_bytes,
+        ).build_transaction({
+            "from": account.address,
+            "nonce": nonce,
+            "gas": 350000,
+            "gasPrice": w3.eth.gas_price,
+            "chainId": CHAIN_ID,
+        })
+
+        signed_tx = account.sign_transaction(tx)
+        tx_hash_bytes = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash_bytes, timeout=30)
+
+        if int(receipt.status) != 1:
+            raise RuntimeError("Blockchain transaction reverted; commitment was not confirmed.")
+
+        # Verify the committed record is readable from the contract.
+        matches, project_id_on_chain, block_num = (
+            contract.functions.verifyDonationCommitment(
+                donation.id,
+                commitment_bytes,
+            ).call()
+        )
+        if not matches or project_id_on_chain != donation.project_id:
+            raise RuntimeError(
+                "Transaction succeeded, but on-chain commitment verification failed."
+            )
+
+        tx_hash = Web3.to_hex(receipt.transactionHash)
+        block_number = int(receipt.blockNumber)
+
+        donation.blockchain_status = "Confirmed"
+        donation.blockchain_tx_hash = tx_hash
+        donation.blockchain_block_number = block_number
+        donation.blockchain_anchored_at = datetime.now(timezone.utc)
+
+        db.commit()
+        db.refresh(donation)
+
+        return {
+            "donationId": donation.id,
+            "projectId": donation.project_id,
+            "commitmentHash": donation.commitment_hash,
+            "blockchainStatus": donation.blockchain_status,
+            "blockchainTxHash": donation.blockchain_tx_hash,
+            "blockchainBlockNumber": donation.blockchain_block_number,
+            "onChainSubmission": True,
+            "anchoredAt": donation.blockchain_anchored_at.isoformat(),
+            "message": (
+                f"Donation commitment {donation.id} recorded and verified "
+                f"on-chain at block #{block_number}."
+            ),
+        }
+
+    except Exception as exc:
+        db.rollback()
+        failed_donation = db.query(Donation).filter(
+            Donation.id == donation.id
+        ).first()
+        if failed_donation is not None:
+            failed_donation.blockchain_status = "Failed"
+            db.commit()
+        logger.exception("Real on-chain donation anchoring failed for %s", donation.id)
+        raise RuntimeError(
+            f"Donation {donation.id} was not confirmed on-chain: {exc}"
+        ) from exc
+
 
 def verify_donation_commitment_on_chain(
     db: Session,
